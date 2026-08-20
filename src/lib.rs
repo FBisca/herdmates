@@ -11,6 +11,7 @@ pub mod agents_md;
 pub mod attention;
 pub mod audit;
 pub mod board;
+pub mod dateutil;
 pub mod focus_pane;
 pub mod focusfile;
 pub mod gather;

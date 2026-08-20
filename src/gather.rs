@@ -55,10 +55,10 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 use thiserror::Error;
 
-/// Injectable roots for every file source this module reads. Defaults
-/// mirror Claude Code's documented on-disk layout and `pump::
-/// default_teams_root`'s existing `HERDMATES_TEAMS_ROOT` override
-/// convention; tests always construct this directly against a tempdir.
+/// Injectable roots for every file source this module reads. `teams_root`
+/// defaults mirror `pump::default_teams_root` exactly — delegated to it
+/// below (issue #115 dedupe) rather than reimplemented; tests always
+/// construct this directly against a tempdir.
 #[derive(Debug, Clone)]
 pub struct GatherPaths {
     pub teams_root: PathBuf,
@@ -70,9 +70,10 @@ impl GatherPaths {
     pub fn from_env() -> Option<Self> {
         let home = PathBuf::from(std::env::var_os("HOME")?);
         Some(Self {
-            teams_root: std::env::var_os("HERDMATES_TEAMS_ROOT")
-                .map(PathBuf::from)
-                .unwrap_or_else(|| home.join(".claude/teams")),
+            // HOME is confirmed present above, so pump::default_teams_root
+            // only fails on a race; fall back to the same default it would
+            // have used.
+            teams_root: pump::default_teams_root().unwrap_or_else(|_| home.join(".claude/teams")),
             tasks_root: std::env::var_os("HERDMATES_TASKS_ROOT")
                 .map(PathBuf::from)
                 .unwrap_or_else(|| home.join(".claude/tasks")),
@@ -610,23 +611,9 @@ pub(crate) fn parse_iso8601_utc(s: &str) -> Option<u64> {
         return None;
     }
 
-    let days = days_from_civil(year, month, day);
+    let days = crate::dateutil::days_from_civil(year, month, day);
     let days: u64 = days.try_into().ok()?;
     Some(days * 86_400 + hour * 3_600 + minute * 60 + second)
-}
-
-/// Howard Hinnant's `days_from_civil`: days since the Unix epoch
-/// (1970-01-01) for a proleptic-Gregorian civil date. Standard,
-/// well-tested algorithm; reimplemented here rather than pulling in a
-/// time crate for one conversion.
-fn days_from_civil(y: i64, m: u32, d: u32) -> i64 {
-    let y = if m <= 2 { y - 1 } else { y };
-    let era = if y >= 0 { y } else { y - 399 } / 400;
-    let yoe = y - era * 400;
-    let mp = (i64::from(m) + 9) % 12;
-    let doy = (153 * mp + 2) / 5 + i64::from(d) - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    era * 146_097 + doe - 719_468
 }
 
 #[cfg(test)]
