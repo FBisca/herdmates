@@ -2,7 +2,7 @@ id = "caioniehues.herdmates"
 name = "Herdmates"
 version = "2.3.0"
 min_herdr_version = "0.7.4"
-description = "Claude Code agent teams, native in herdr — teammux shim (takeover default), mission-control board, focus pane, hook-driven recorder (legacy v1 orchestration still included, frozen)"
+description = "Claude Code agent teams, native in herdr — teammux shim (takeover default), hook-driven signal engine + recorder, sidebar tokens"
 platforms = ["linux", "macos"]
 
 [[build]]
@@ -45,47 +45,12 @@ title = "Open team report"
 contexts = ["pane"]
 command = ["herdmates", "open-report"]
 
-[[actions]]
-id = "jump"
-title = "Jump to next attention item"
-contexts = ["workspace"]
-command = ["herdmates", "jump"]
-
 [[panes]]
 id = "board"
 title = "Agent Team control deck (legacy v1, frozen)"
 description = "Keyboard-driven worker controls; open as a tab or override placement for a quick popup."
 placement = "tab"
 command = ["herdmates", "board"]
-
-[[panes]]
-id = "focus"
-title = "Focus"
-description = "One-next-action focus file + decision queue. A real split/overlay pane — never a popup."
-placement = "split"
-command = ["herdmates", "focus"]
-
-[[actions]]
-id = "open-focus"
-title = "Open focus pane"
-contexts = ["workspace"]
-command = ["sh", "-c", "\"$HERDR_BIN_PATH\" plugin pane open --plugin caioniehues.herdmates --entrypoint focus --placement split"]
-
-# Issue #98 stage 3 (ADR-0013 §93 stage 3, docs/spec.md §4): read-only
-# full-screen board, split placement per Caio decision — distinct from the
-# legacy `board` entrypoint above (frozen v1.1.0, different data model).
-[[panes]]
-id = "pane-board"
-title = "Mission control board"
-description = "Read-only team overview: agent status/reason badges, task list, mailbox tail. All reads, no writes."
-placement = "split"
-command = ["herdmates", "pane-board"]
-
-[[actions]]
-id = "open-pane-board"
-title = "Open mission control board"
-contexts = ["workspace"]
-command = ["sh", "-c", "\"$HERDR_BIN_PATH\" plugin pane open --plugin caioniehues.herdmates --entrypoint pane-board --placement split"]
 
 [[link_handlers]]
 id = "report"

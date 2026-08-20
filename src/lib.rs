@@ -6,19 +6,13 @@
 //! source. `src/main.rs` re-imports everything below via `use herdmates::*;`
 //! so its existing subcommand dispatch is unchanged.
 
-pub mod attention;
-pub mod audit;
 pub mod dateutil;
 pub mod doctor;
-pub mod focus_pane;
-pub mod focusfile;
 pub mod gather;
 pub mod herdr;
 pub mod idmap;
 pub mod inbox_write;
-pub mod jump;
 pub mod metadata;
-pub mod pane_board;
 pub mod paths;
 pub mod pump;
 pub mod recorder;

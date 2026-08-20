@@ -102,8 +102,7 @@ pub struct TeammateFacts {
 /// Gather every member of `team`'s [`ObservedFacts`] from live sources.
 /// Never panics: a missing/malformed team config yields an empty result
 /// (nothing to classify), matching every other pass in this crate's
-/// degrade-on-missing-file policy (`pump::pump_once`, `attention::
-/// build_attention_queue`'s callers).
+/// degrade-on-missing-file policy (`pump::pump_once`'s callers).
 pub fn gather_team<H: HerdrApi>(
     paths: &GatherPaths,
     team: &str,
@@ -237,7 +236,7 @@ const LIVE_TRANSCRIPT_WINDOW: Duration = Duration::from_secs(60 * 60);
 /// Pure half of the liveness check: given an already-resolved transcript
 /// mtime (or `None`, meaning no transcript was ever found for the lead
 /// session), is it fresh enough. No filesystem access — testable without
-/// tempdir fixtures, matching the `pane_board.rs` M4 `spool_grew` split.
+/// tempdir fixtures.
 fn is_transcript_live(transcript_mtime: Option<SystemTime>, now: SystemTime) -> bool {
     transcript_mtime.is_some_and(|mtime| {
         // A transcript mtime in the future (NTP step-back, clock desync)

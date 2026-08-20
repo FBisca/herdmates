@@ -1,7 +1,7 @@
 //! herdmates — Herdr plugin binary.
 //!
-//! Current surfaces: `teammux-launch`, `pump-board`, `pane-board`, `focus`,
-//! `jump`, `record`, `hook`, `doctor`.
+//! Current surfaces: `teammux-launch`, `pump-board`, `record`, `hook`,
+//! `doctor`.
 
 use std::fmt::Display;
 use std::process::ExitCode;
@@ -17,17 +17,10 @@ fn main() -> ExitCode {
     match command.as_str() {
         "pump-board" => exit(pump::pump_board_command(&args)),
         "teammux-launch" => exit(teammux_launch::teammux_launch_command(&args)),
-        "jump" => exit(jump::jump_command(&args)),
-        "focus" => exit(focus_pane::focus_pane_command(&args)),
         // Issue #97 stage 2 (ADR-0013 §93 stage 2, docs/spec.md §4): minimal
         // recorder — polls the gather + signal-engine pipeline and appends
         // classified-observation deltas to an append-only JSONL log.
         "record" => exit(recorder::record_command(&args)),
-        // Issue #98 stage 3 (ADR-0013 §93 stage 3, docs/spec.md §4):
-        // read-only full-screen TUI plugin pane over the gather +
-        // signal-engine pipeline. Distinct from the legacy `board`
-        // subcommand (frozen v1.1.0, different data model).
-        "pane-board" => exit(pane_board::pane_board_command(&args)),
         // Issue #100 stage 5 (ADR-0013 §93 stage 5, docs/spec.md §4):
         // push source for the three Claude Code team hook events
         // (TeammateIdle/TaskCreated/TaskCompleted) — appends to the spool
@@ -39,9 +32,7 @@ fn main() -> ExitCode {
         // blocked on #105, not implemented here).
         "doctor" => doctor::doctor_command(&args),
         "" | "help" | "--help" | "-h" => {
-            eprintln!(
-                "herdmates <pump-board|teammux-launch|jump|focus|record|pane-board|hook|doctor>"
-            );
+            eprintln!("herdmates <pump-board|teammux-launch|record|hook|doctor>");
             ExitCode::SUCCESS
         }
         other => {
