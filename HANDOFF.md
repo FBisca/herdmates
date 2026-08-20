@@ -1,43 +1,51 @@
 # Handoff — current state
 
-Updated 2026-07-17 (post-v2.1.0). Previous handoff (wave 1 EOD, stop
-order, "nothing pushed") is SUPERSEDED and archived at
-`docs/handoffs/2026-07-16-wave1-eod-superseded.md` — do not act on it.
+Updated 2026-08-20 (post-v2.2.0, wave "audit + skill recon" in progress).
 
 ## Where things stand
 
-- **v1 mission-control build COMPLETE and RELEASED as v2.1.0** (pushed +
-  tagged). Stages 0–5 all landed: #95 version reconcile, #96 signal
-  engine, #97 recorder, #98 TUI pane-board, #99 jump + confirmed nudge
-  (first inbox write), #100 hook companion (3 team hooks registered
-  user-scope in `~/.claude/settings.json`, spool → recorder + board
-  wake), #101 manifest spawn fix (bare argv0 + `cargo install --path .
-  --root ~/.local`).
-- **#102 resolve_team liveness filter: DONE, committed local, NOT
-  pushed** — shipping it means a v2.1.1 release (bump + tag), which
-  needs Caio's explicit word.
-- **Codebase review executed 2026-07-17**:
-  `docs/reviews/codebase-review-2026-07-17.md` — 11 confirmed findings,
-  all fixed in the same-day fix commit (see git log).
-- Tracker: zero open issues. Repo slug is `caioniehues/herdmates`
-  (renamed from herdr-agent-team; redirect works but don't rely on it).
-- Current phase: **dogfood-in-anger** — use the board + hooks over real
-  work; new tickets only on usage evidence.
+- **v2.2.0 RELEASED** (pushed + tagged 2026-07-17): mission-control v1
+  complete (stages 0–5, #95–#101), #102 resolve_team liveness filter,
+  #103 teammux-launch takeover mode.
+- **2026-08-20 investigation wave**: full codebase+strategy audit and a
+  skill-recon pass (inspiration repos + official docs validation) ran;
+  findings live as issues #104–#116. Reports (private artifacts):
+  "Herdmates Field Audit" and "Herdmates Skill Recon" in Caio's artifact
+  gallery.
+- **Dogfood-in-anger RESUMED by decision 2026-08-20** — it had silently
+  stalled (plugin uninstalled, zero commits 2026-07-18…08-19, #104
+  untriaged). Reinstall + shim E2E re-run is #105 (human-present).
+- **Working tree ahead of last release**: CI gate (#107, committed),
+  skills rewrite (new `skills/herdmates/`, god + codex-prompting
+  tombstoned — #110), further wave tickets landing as commits. **Batch
+  release (v2.3.0) at wave end, only on Caio's word.**
+- Upstream drift to absorb: Claude Code 2.1.237 (shim proven on 2.1.211;
+  three team-relevant changes since — see #105), herdr 0.8.2 at
+  `herdrdev/herdr` (org moved, Apache-2.0, `herdr --skill`,
+  `truncated:true` reads — see #108).
 
 ## How to resume
 
-1. `git log --oneline -15` — the commit subjects narrate the build.
-2. Project state canon: auto-memory
-   (`~/.claude/projects/-home-caio-Projects-herdr-agent-team/memory/`),
-   loaded automatically; richest single source.
-3. `docs/adr/0013-north-star-mission-control.md` + `docs/spec.md` — the
+1. `gh issue list` — the wave backlog, labels per
+   `docs/agents/triage-labels.md`; blockers named in bodies.
+2. `git log --oneline -15` — commit subjects narrate the build.
+3. Project state canon: auto-memory
+   (`~/.claude/projects/-home-caio-Projects-herdmates/memory/`), loaded
+   automatically.
+4. `docs/adr/0013-north-star-mission-control.md` + `docs/spec.md` — the
    north star; ADR-0012 for the pivot context.
-4. `docs/learnings/` — per-issue wave learnings, newest first.
+5. `docs/learnings/` — per-issue wave learnings, newest first.
 
 ## Standing rules (unchanged)
 
-- Pushes to `main` are releases: gate (fmt/clippy/tests), bump manifest
-  version on behavior change, tag. **No push without Caio's word.**
-- Hooks call the ABSOLUTE release binary path — rebuild
-  (`cargo build --release`) after src changes or live hooks run stale.
-- Frozen legacy surface per ADR-0012; new evidence → new ADR, ask Caio.
+- Pushes to `main` are releases: gate (fmt/clippy/tests — now also CI,
+  `.github/workflows/ci.yml`), bump manifest version on behavior change,
+  tag. **No push without Caio's word.**
+- Hooks resolve the bare `herdmates` binary via PATH — reinstall
+  (`cargo install --path . --root ~/.local`) after src changes or live
+  hooks run stale.
+- Frozen legacy surface per ADR-0012; its disposition is decision ticket
+  #116. New evidence → new ADR, ask Caio.
+- Re-verify after upstream updates: re-snapshot the herdr API schema
+  after any herdr update; re-run the shim E2E after any Claude Code
+  update (see `skills/herdmates/SKILL.md` "Version discipline").

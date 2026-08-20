@@ -1,8 +1,9 @@
 //! herdmates — Herdr plugin binary.
 //!
-//! Legacy subcommands (`adopt`, `spawn`, `status`, `kill`, `msg`, `on-agent-status`)
-//! are frozen at v1.1.0 (ADR-0012); new surfaces are `pump-board` (D1) and
-//! focus-pane (D3).
+//! Legacy subcommands (`adopt`, `board`, `open-report`, `spawn`, `status`,
+//! `kill`, `inbox`, `report`, `wait`, `msg`, `on-agent-status`) are frozen at
+//! v1.1.0 (ADR-0012). Current surfaces: `teammux-launch`, `pump-board`,
+//! `pane-board`, `focus`, `jump`, `record`, `hook`.
 
 use std::fmt::Display;
 use std::process::ExitCode;
