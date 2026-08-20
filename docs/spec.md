@@ -28,6 +28,13 @@ clean dismissal. The ADR-0012 control-mode kill signal is cleared
 
 ### 2.2 Mission control
 
+> **Superseded 2026-08-20** by [ADR-0015](adr/0015-feature-rebaseline-lead-centric.md):
+> the board and focus pane pillars below are deleted (#120) — herdmates
+> feeds the native lead directly (sidebar tokens + brain layer) instead
+> of building parallel human-facing team UIs. Signal engine, recorder,
+> and hook companion still stand; inbox-write is demoted to a
+> break-glass-only fallback. History preserved below, not authoritative.
+
 The monitor/steer/gate stack over a native team, single-team v1 (data
 model enumerates `~/.claude/teams/*` from day one):
 
@@ -37,19 +44,22 @@ model enumerates `~/.claude/teams/*` from day one):
   detection (quiet 5m / stalled 10m, transcript-mtime liveness,
   unread-inbox accelerator). Never display a wrong reason — degrade to
   reason-less "waiting". Full design: #92 resolution.
-- **Board** — team telemetry: what state is each teammate in and why.
-  Two tiers: sidebar tokens (display-only, `pane report-metadata`) and
-  the full-screen TUI plugin pane (overview, per-agent rows, flat task
-  list from native `~/.claude/tasks/` files, mailbox tail, metadata
-  row). Progress is an honest proxy only (done/total, per-task
-  elapsed); ETA prediction is banned.
-- **Focus pane** — human focus: one next action + decision queue,
-  rendered from the focus file. Distinct surface from the board (#90);
-  consumes only human-needing items from the same signal engine, so
-  the two surfaces cannot disagree.
-- **Inbox-write steering** — pre-composed nudge to a stuck teammate,
-  human-reviewed and confirmed before write; `.lock` +
-  read-filter-atomic-rename discipline (#91). No auto-nudge in v1.
+- **Board** *(superseded by ADR-0015 — TUI plugin pane deleted #120;
+  sidebar tokens retained)* — team telemetry: what state is each
+  teammate in and why. Two tiers: sidebar tokens (display-only, `pane
+  report-metadata`) and the full-screen TUI plugin pane (overview,
+  per-agent rows, flat task list from native `~/.claude/tasks/` files,
+  mailbox tail, metadata row). Progress is an honest proxy only
+  (done/total, per-task elapsed); ETA prediction is banned.
+- **Focus pane** *(superseded by ADR-0015 — deleted #120)* — human
+  focus: one next action + decision queue, rendered from the focus
+  file. Distinct surface from the board (#90); consumes only
+  human-needing items from the same signal engine, so the two surfaces
+  cannot disagree.
+- **Inbox-write steering** *(demoted by ADR-0015 to break-glass only)*
+  — pre-composed nudge to a stuck teammate, human-reviewed and
+  confirmed before write; `.lock` + read-filter-atomic-rename
+  discipline (#91). No auto-nudge in v1.
 - **Recorder** — minimal append-only log of the engine's classified
   observations; log schema = engine output schema. Replay UI later.
 - **Hook companion** — the three team hooks (`TeammateIdle`/

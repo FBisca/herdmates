@@ -1,6 +1,6 @@
 id = "caioniehues.herdmates"
 name = "Herdmates"
-version = "2.3.0"
+version = "3.0.0"
 min_herdr_version = "0.7.4"
 description = "Claude Code agent teams, native in herdr — teammux shim (takeover default), hook-driven signal engine + recorder, sidebar tokens"
 platforms = ["linux", "macos"]
@@ -11,80 +11,5 @@ platforms = ["linux", "macos"]
 # `~/.local/bin` (confirmed on PATH, matches where `herdr` itself
 # lives). herdr spawns argv directly (no shell) — a literal "~" in
 # argv would never expand and would create a literal ./~ directory, so
-# this goes through the manifest's existing `sh -c` convention
-# (`open-board` action already does), not a bare argv array.
+# this goes through `sh -c`, not a bare argv array.
 command = ["sh", "-c", "cargo install --path . --root \"$HOME/.local\""]
-
-[[actions]]
-id = "spawn"
-title = "Spawn agent team (legacy v1, frozen)"
-contexts = ["workspace"]
-command = ["herdmates", "spawn"]
-
-[[actions]]
-id = "status"
-title = "Team status (legacy v1, frozen)"
-contexts = ["workspace"]
-command = ["herdmates", "status"]
-
-[[actions]]
-id = "kill"
-title = "Kill team (legacy v1, frozen)"
-contexts = ["workspace"]
-command = ["herdmates", "kill"]
-
-[[actions]]
-id = "open-board"
-title = "Open team control deck (legacy v1, frozen)"
-contexts = ["workspace"]
-command = ["sh", "-c", "\"$HERDR_BIN_PATH\" plugin pane open --plugin caioniehues.herdmates --entrypoint board --placement tab"]
-
-[[actions]]
-id = "open-report"
-title = "Open team report"
-contexts = ["pane"]
-command = ["herdmates", "open-report"]
-
-[[panes]]
-id = "board"
-title = "Agent Team control deck (legacy v1, frozen)"
-description = "Keyboard-driven worker controls; open as a tab or override placement for a quick popup."
-placement = "tab"
-command = ["herdmates", "board"]
-
-[[link_handlers]]
-id = "report"
-title = "Open team report"
-pattern = "^report:.+$"
-action = "open-report"
-
-# Report flow: worker status flips -> inbox append + pointer injection into the
-# god pane (ADR-0002). The manifest uses the live-verified dot-form event name;
-# HERDR_PLUGIN_EVENT_JSON uses the underscore form (spec section 9).
-[[events]]
-on = "pane.agent_status_changed"
-command = ["herdmates", "on-agent-status"]
-
-[[events]]
-on = "pane.moved"
-command = ["herdmates", "on-agent-status"]
-
-[[events]]
-on = "pane.exited"
-command = ["herdmates", "on-agent-status"]
-
-[[events]]
-on = "pane.closed"
-command = ["herdmates", "on-agent-status"]
-
-[[events]]
-on = "workspace.closed"
-command = ["herdmates", "on-agent-status"]
-
-[[events]]
-on = "worktree.removed"
-command = ["herdmates", "on-agent-status"]
-
-[[events]]
-on = "pane.agent_detected"
-command = ["herdmates", "on-agent-status"]

@@ -5,30 +5,10 @@
 Herdmates makes herdr the visible home of Anthropic's native Claude Code
 agent teams. The teams own spawn, mailboxes, membership, and lifecycle —
 herdmates **hosts** them (every teammate lands as a real, steerable herdr
-pane) and **observes** them (a mission-control board over the documented
-team files). It never re-implements native-team features; it reads the
-files Claude Code already writes and drives the herdr CLI.
-
-```
-┌Overview──────────────────────────────────────────────┐
-│team session-8508a749 — 3 agents — tasks 2/5          │
-└──────────────────────────────────────────────────────┘
-┌Agents────────────────────────────────────────────────┐
-│> · team-lead (lead)                                  │
-│  · builder-98        working                         │
-│  · researcher        waiting — permission prompt     │
-└──────────────────────────────────────────────────────┘
-┌Tasks─────────────────────────────────────────────────┐
-│#3 wire spool wake        in_progress   builder-98    │
-│#4 verify liveness filter pending       (blocked by 3)│
-└──────────────────────────────────────────────────────┘
-┌Mailbox───────────────────────────────────────────────┐
-│builder-98 → team-lead: STEP 2 READY — gate clean     │
-└──────────────────────────────────────────────────────┘
-```
-
-*(Illustrative content; the four regions are the real `pane-board`
-layout.)*
+pane) and **feeds the native lead** (sidebar tokens + a durable recorder
+over the documented team files, ADR-0015 — no parallel board/focus UI).
+It never re-implements native-team features; it reads the files Claude
+Code already writes and drives the herdr CLI.
 
 ## The flow
 
@@ -36,12 +16,11 @@ layout.)*
    the **team lead**, running under the teammux shim.
 2. Ask Claude to spawn teammates — each one opens as a **real herdr
    pane** next to you, not a hidden background process.
-3. Open the **board** — live per-agent state with honest waiting-reason
-   badges, the native task list, and the mailbox tail.
-4. From the board: **jump** to any teammate's pane, or send a
-   **confirmed nudge** into a stuck teammate's inbox.
-5. Claude Code's team hooks **push** events into the board and an
-   append-only **recorder** log — no polling lag.
+3. Watch the **sidebar tokens** for live per-agent state with honest
+   waiting-reason badges, right beside the panes themselves.
+4. Claude Code's team hooks **push** events into an append-only
+   **recorder** log — no polling lag, a durable trace if the lead
+   crashes.
 
 ## Install
 
@@ -88,21 +67,18 @@ teammates land as first-class herdr panes — proven live end-to-end
 - Herdr-only by design: the shim's output surface IS herdr panes.
   Outside herdr, Claude Code falls back to in-process teammates.
 
-### Mission-control board
+### Ambient observation
 
-- **TUI pane** (`pane-board` entrypoint, or `herdmates pane-board`):
-  read-only team overview — overview line, per-agent rows with
-  waiting-reason badges, native task list (`~/.claude/tasks/`), mailbox
-  tail. Wakes event-driven on hook-spool growth, falls back to polling.
-  - Keys: `j`/`k` select agent · `g` jump to its pane · `n` nudge
-    (confirm with `y`/`Enter`, cancel with `Esc`) · `q` quit.
 - **Sidebar tokens**: teammate state published via
   `pane report-metadata` — the herdr sidebar becomes a zero-rendering
   fleet board. See [Sidebar setup](#sidebar-setup).
-- **Focus pane** (`focus` entrypoint): the human's single next action +
-  decision queue from `~/.local/share/herdmates/focus.md` — one thing at
-  a time, fed by the same signal engine as the board so the two surfaces
-  cannot disagree.
+
+The earlier TUI board and focus pane surfaces are deleted (#118/#120,
+ADR-0015): a per-session team dir made "which team?" structurally
+ambiguous at open time for any standalone surface. Herdmates now feeds
+the native lead directly instead; a lead-facing skill + hook enrichment
+("brain layer") is planned post-v3.0 — see
+[ADR-0015](docs/adr/0015-feature-rebaseline-lead-centric.md).
 
 ### Signal engine, recorder, hooks
 
@@ -122,9 +98,9 @@ teammates land as first-class herdr panes — proven live end-to-end
   `N` bytes; omit it (or pass `0`) for the previous unlimited behavior.
 - **Hook companion** — `herdmates hook <event>` registered for Claude
   Code's three team hook events (`TeammateIdle` / `TaskCreated` /
-  `TaskCompleted`) spools events per team; board and recorder consume
-  the spool. Exit-2 gating capability exists but ships **default-off**
-  and has no blocking predicate in v1.
+  `TaskCompleted`) spools events per team; the recorder consumes the
+  spool. Exit-2 gating capability exists but ships **default-off** and
+  has no blocking predicate in v1.
 
 ## Sidebar setup
 
@@ -155,9 +131,9 @@ Hard-won facts (verified live against herdr 0.7.4):
   to Claude Code; herdmates only reads documented team files and drives
   the herdr CLI (`HERDR_BIN_PATH` is the entire plugin API).
 - **Evidence hierarchy**: live behavior > source > docs (ADR-0010).
-- **Writes are human-confirmed**: the only team-file write is the
-  confirmed nudge, under an OS advisory lock with
-  read-modify-atomic-rename.
+- **Read-only by default**: herdmates performs no team-file writes
+  today; the confirmed-nudge write path is a break-glass-only fallback
+  (ADR-0015), not a routine surface.
 
 ## Documentation map
 
@@ -187,13 +163,14 @@ herdr plugin link .                            # refresh manifest cache
   `herdr-plugin.toml` change.
 - Pushes to `main` are releases: gated, version-bumped, tagged.
 
-## Legacy: v1.x team orchestration (frozen)
+## Legacy: v1.x team orchestration (removed)
 
 The original plugin spawned heterogeneous coding-agent teams (Claude +
 Codex) under a coordinating "god" session with push-based status
-reporting. Frozen at v1.1.0 (ADR-0012); the code remains in-tree, the
-spec at [`docs/legacy/spec-v1.md`](docs/legacy/spec-v1.md), and it
-receives no further investment.
+reporting. Frozen at v1.1.0 (ADR-0012), then deleted outright in
+v3.0.0 (#119, ADR-0015) — git history is the archive. Spec preserved
+at [`docs/legacy/spec-v1.md`](docs/legacy/spec-v1.md) for reference
+only.
 
 ## License
 

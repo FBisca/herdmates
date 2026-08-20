@@ -7,7 +7,10 @@ legacy orchestration terms (still accurate for the v1.x surface) below.
 ## Herdmates (pivot vocabulary, ADR-0012)
 
 - **Herdmates** — this plugin: Claude Code teammates, native in herdr.
-  Three surfaces: shim, agent board, focus pane.
+  Base surfaces per ADR-0015: shim, signal engine + recorder + hook
+  companion, sidebar tokens, plus the brain layer (below). The TUI
+  board and focus pane surfaces named in earlier drafts of this file
+  are deleted (#120); see the Brain layer section.
 - **Native team** — a Claude Code agent-teams session (lead + teammates)
   as shipped by Anthropic: spawn, mailboxes, lifecycle all upstream. We
   never re-implement it; we host and observe it.
@@ -31,38 +34,39 @@ legacy orchestration terms (still accurate for the v1.x surface) below.
 - **Team files** — the documented on-disk state of a native team:
   `~/.claude/teams/{team}/config.json` (members, session IDs, pane IDs)
   and `inboxes/{agent}.json` (mailboxes). The boards' data source.
-- **Agent board** — the surface answering "what are the agents doing?".
-  Two forms: **sidebar-token board** (D1) — teammate state pumped into
-  herdr sidebar rows via `pane report-metadata` tokens; **TUI board** (D2)
-  — an interactive terminal UI in a zoomed/overlay plugin pane.
-- **Focus pane** — the surface answering "what should the human be
-  doing?": current task, the single next action, decision queue. Renders
-  the focus file; ADHD-harness pattern (one thing at a time).
-- **Focus file** — plain-file contract at
-  `~/.local/share/herdmates/focus.md`. Anything may write it (human,
-  agent, atomizer skill); the focus pane only renders it.
-- **Atomizer** — companion skill that breaks a task dump into the single
-  next concrete action and writes the focus file (pattern copied from
-  human-harness, not depended on).
+- **Agent board** *(removed by ADR-0015, #120)* — was "what are the
+  agents doing?", two forms: sidebar-token board (D1, kept — see
+  **Sidebar token** below) and TUI board (D2, deleted; #118's
+  multi-team ambiguity was structural, not fixable in the surface).
+- **Focus pane** *(removed by ADR-0015, #120)* — was "what should the
+  human be doing?": current task, single next action, decision queue.
+  Superseded by the native lead + brain layer.
+- **Focus file** *(removed by ADR-0015, #120)* — was the plain-file
+  contract the focus pane rendered and the atomizer skill wrote.
+- **Atomizer** *(removed by ADR-0015, #120)* — was the companion skill
+  breaking a task dump into a single next action for the focus file.
 - **Plugin pane** — herdr surface: a plugin-declared TUI process in a
   herdr-managed pane (`plugin.pane.open`; placements overlay/split/tab/
   zoomed). Real pane, full pane APIs.
 - **Popup pane** — herdr surface: session-modal floating pane, no pane id,
   invisible to pane/agent APIs, swallows all input, dies with its command.
-  Quick-glance only; never the board's home.
+  Quick-glance only.
 - **Sidebar token** — named display value (`--token name=value`, rendered
   as `$name` in `[ui.sidebar.agents] rows`) attached to a pane via
   `pane report-metadata`. Display-only; never semantic state.
 
-## Mission control (north-star vocabulary, ADR-0013)
+## Mission control (north-star vocabulary, ADR-0013; board/focus pillars
+superseded by ADR-0015, see Brain layer section below)
 
-- **Mission control** — the monitor/steer/gate stack over a native
-  team: signal engine + board + focus pane + inbox-write steering +
-  recorder + hook companion.
+- **Mission control** *(superseded by ADR-0015)* — was the monitor/
+  steer/gate stack over a native team: signal engine + board + focus
+  pane + inbox-write steering + recorder + hook companion. The base is
+  now the Host/Facts/Record/Ambient/Brain layers in ADR-0015.
 - **Signal engine** — the shared library module that classifies each
   teammate into one waiting-reason class from team files, herdr CLI,
-  and transcript mtime. Single source of blocked/stalled facts; board
-  and focus pane both consume it, neither re-derives.
+  and transcript mtime. Single source of blocked/stalled facts; the
+  recorder, sidebar tokens, and brain layer all consume it, none
+  re-derives.
 - **Waiting-reason** — the one badge a teammate carries: four classes,
   precedence top-down — permission-prompt (pane-backed only, native
   herdr Blocked) > blocked-on-dependency (idle + owned task with
@@ -75,12 +79,12 @@ legacy orchestration terms (still accurate for the v1.x surface) below.
 - **Status-lag deadlock** — the failure mode the stalled class exists
   to surface: a team quietly wedged (mailbox not draining, task never
   progressing) while every teammate looks idle.
-- **Inbox-write steering** — nudging a teammate by writing to its
-  mailbox under `.lock` + read-filter-atomic-rename discipline. V1 is
-  human-confirmed only (suggested nudge); auto-nudge is post-v1.
-- **Suggested nudge** — a pre-composed inbox message the TUI pane
-  offers for a stuck teammate; the human reviews and confirms before
-  any write.
+- **Inbox-write steering** *(demoted by ADR-0015 to break-glass
+  only)* — nudging a teammate by writing to its mailbox under `.lock`
+  + read-filter-atomic-rename discipline. Human-confirmed only.
+- **Suggested nudge** *(dormant — depended on the deleted TUI board)*
+  — a pre-composed inbox message offered for a stuck teammate; the
+  human reviews and confirms before any write.
 - **Recorder** — minimal append-only log of the signal engine's
   classified observations (state transitions, reason changes,
   task-file deltas). Log schema = engine output schema. Replay UI is
@@ -94,10 +98,33 @@ legacy orchestration terms (still accurate for the v1.x surface) below.
 - **JSONL tier** — the deferred post-v1 surfaces requiring session-
   JSONL parsing: context bar, cost footer, per-agent activity tail.
   V1 uses transcript mtime as a stat only.
-- **Attention queue** — focus-pane term (per #90 disposition): the
-  ordered human-needing items (decisions, blocked workers) the focus
-  pane renders below the single next action; sourced from the focus
-  file, lead inbox, and the signal engine's human-needing subset.
+- **Attention queue** *(removed by ADR-0015, #120)* — was a focus-pane
+  term (per #90 disposition): the ordered human-needing items the
+  focus pane rendered below the single next action.
+
+## Brain layer (ADR-0015, v3.1+)
+
+The base ADR-0015 defines to replace the board/focus pillars above.
+Herdmates feeds the native lead instead of building parallel
+human-facing team UIs; the layer table is Host (shim, doctor) / Facts
+(signal engine, gather, hook spool) / Record (recorder) / Ambient
+(sidebar tokens) / Brain (below) / Break-glass (inbox-write).
+
+- **Brain layer** — the lead-facing enrichment layer: push (hook
+  enrichment) and pull (lead-facing skill), both resolving the team
+  from the lead's own session id, so no surface ever guesses "which
+  team". Not yet implemented (v3.1+ per ADR-0015 rollout).
+- **Hook enrichment** — the brain layer's push half: `herdmates hook`
+  handlers, running as the lead's children on TeammateIdle/
+  TaskCreated/TaskCompleted, compute signal-engine facts and post them
+  into the lead's own inbox socket (`CLAUDE_CODE_MESSAGING_SOCKET`/
+  `_TOKEN`) so the lead's model sees reasons alongside native events.
+- **Lead-facing skill** — the brain layer's pull half: project-level
+  skill verbs (`why <agent>`, `deadlocks`, `roster`) resolving the
+  team from the calling session's own id. Teammates load the same
+  skill; facts are read-only so that's fine.
+- **Break-glass** — the inbox-file nudge's demoted role post-ADR-0015:
+  a fallback channel only, used when the lead itself is down.
 
 ## Legacy orchestration vocabulary (v1.x surface, frozen at v1.1.0)
 
