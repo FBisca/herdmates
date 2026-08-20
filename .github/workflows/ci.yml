@@ -18,8 +18,3 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test
-      # ADR-0014: legacy-v1 feature gate — the crate defaults the feature on
-      # (single-crate binary can't have per-target defaults), so the freeze
-      # is enforced here by also gating on --no-default-features.
-      - run: cargo clippy --all-targets --no-default-features -- -D warnings
-      - run: cargo test --no-default-features

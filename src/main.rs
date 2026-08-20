@@ -1,9 +1,7 @@
 //! herdmates — Herdr plugin binary.
 //!
-//! Legacy subcommands (`adopt`, `board`, `open-report`, `spawn`, `status`,
-//! `kill`, `inbox`, `report`, `wait`, `msg`, `on-agent-status`) are frozen at
-//! v1.1.0 (ADR-0012). Current surfaces: `teammux-launch`, `pump-board`,
-//! `pane-board`, `focus`, `jump`, `record`, `hook`.
+//! Current surfaces: `teammux-launch`, `pump-board`, `pane-board`, `focus`,
+//! `jump`, `record`, `hook`, `doctor`.
 
 use std::fmt::Display;
 use std::process::ExitCode;
@@ -17,45 +15,6 @@ fn main() -> ExitCode {
     let args = args.collect::<Vec<_>>();
 
     match command.as_str() {
-        #[cfg(feature = "legacy-v1")]
-        #[allow(deprecated)]
-        "adopt" => exit(adopt::adopt_command(&args)),
-        #[cfg(feature = "legacy-v1")]
-        #[allow(deprecated)]
-        "board" => exit(board::board_command(&args)),
-        #[cfg(feature = "legacy-v1")]
-        #[allow(deprecated)]
-        "open-report" => exit(board::open_report_command(&args)),
-        #[cfg(feature = "legacy-v1")]
-        #[allow(deprecated)]
-        "spawn" => exit(spawn::spawn_command(&args)),
-        #[cfg(feature = "legacy-v1")]
-        #[allow(deprecated)]
-        "status" => exit(status_kill::status_command(&args)),
-        #[cfg(feature = "legacy-v1")]
-        #[allow(deprecated)]
-        "kill" => exit(status_kill::kill_command(&args)),
-        #[cfg(feature = "legacy-v1")]
-        #[allow(deprecated)]
-        "inbox" => exit(god_cli::inbox_command(&args)),
-        #[cfg(feature = "legacy-v1")]
-        #[allow(deprecated)]
-        "report" => exit(god_cli::report_command(&args)),
-        #[cfg(feature = "legacy-v1")]
-        #[allow(deprecated)]
-        "wait" => match god_cli::wait_command(&args) {
-            Ok(verdict) => ExitCode::from(verdict.exit_code()),
-            Err(error) => {
-                eprintln!("{error}");
-                ExitCode::FAILURE
-            }
-        },
-        #[cfg(feature = "legacy-v1")]
-        #[allow(deprecated)]
-        "msg" => exit(msg::msg_command(&args)),
-        #[cfg(feature = "legacy-v1")]
-        #[allow(deprecated)]
-        "on-agent-status" => exit(hook::hook_command()),
         "pump-board" => exit(pump::pump_board_command(&args)),
         "teammux-launch" => exit(teammux_launch::teammux_launch_command(&args)),
         "jump" => exit(jump::jump_command(&args)),
@@ -81,7 +40,7 @@ fn main() -> ExitCode {
         "doctor" => doctor::doctor_command(&args),
         "" | "help" | "--help" | "-h" => {
             eprintln!(
-                "herdmates <adopt|board|spawn|status|kill|inbox|report|wait|msg|open-report|on-agent-status|pump-board|teammux-launch|jump|focus|record|pane-board|hook|doctor>"
+                "herdmates <pump-board|teammux-launch|jump|focus|record|pane-board|hook|doctor>"
             );
             ExitCode::SUCCESS
         }

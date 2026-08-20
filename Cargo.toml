@@ -6,10 +6,6 @@ license = "MIT"
 description = "Herdr plugin: Claude Code teammates, native in herdr — shim, agent board, focus pane"
 repository = "https://github.com/caioniehues/herdmates"
 
-[features]
-default = ["legacy-v1"]
-legacy-v1 = []
-
 [dependencies]
 crossterm = "0.28"
 fs4 = { version = "1.1", features = ["sync"] }
