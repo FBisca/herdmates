@@ -8,6 +8,24 @@
 //! are silently pruned on next read, so a schema mistake here is a lost
 //! message, not a visible error.
 //!
+//! ## Threat model (issue #113)
+//!
+//! Our own `.lock` sidecar only serializes writers that agree to take it.
+//! Claude Code's own team runtime writes this exact `inboxes/{agent}.json`
+//! file too, and its locking contract is officially undocumented (verified
+//! against the docs, 2026-08-20) — nothing says it takes our lock, or any
+//! lock at all. So a write from Claude Code landing between our read and
+//! our atomic rename is a real, unprevented lost-update: either its write
+//! or ours silently disappears, and our own flock only ever protects us
+//! from a second `herdmates` process, never from that external writer.
+//! This module doesn't invent a cross-process locking protocol Claude Code
+//! never agreed to (nothing to gain — an external writer that ignores our
+//! lock would ignore a fancier one too). Instead it detects honestly:
+//! after the rename, [`append_entry`] re-reads the file and confirms the
+//! entry it just wrote (by `msg_id`) is actually there. If it isn't, that
+//! means something clobbered it in the gap, and callers get
+//! [`InboxWriteError::ConcurrentWriter`] instead of a false "it worked".
+//!
 //! This module never invents an inbox file: a missing `inboxes/{agent}.json`
 //! (ENOENT) means the teammate has no inbox (e.g. in-process backend, per
 //! the hook-companion doc's live-file finding) and is surfaced as
@@ -41,6 +59,10 @@ pub enum InboxWriteError {
         #[source]
         source: serde_json::Error,
     },
+    #[error(
+        "entry {msg_id} vanished from {path} immediately after we wrote it — a concurrent writer (likely Claude Code's own runtime, which does not honor our lock) clobbered it"
+    )]
+    ConcurrentWriter { path: PathBuf, msg_id: String },
 }
 
 /// Live-verified entry schema (#89 evidence, carried into #98's findings):
@@ -246,7 +268,38 @@ pub fn append_entry(
     std::fs::rename(&tmp_path, &inbox_path).map_err(|source| InboxWriteError::Io {
         path: inbox_path.clone(),
         source,
-    })
+    })?;
+
+    // The lock above only serializes writers that take it; Claude Code's
+    // own runtime does not (see module doc's threat model). Confirm our
+    // entry actually survived rather than trusting a successful rename.
+    verify_entry_present(&inbox_path, &entry.msg_id)
+}
+
+/// Re-reads `inbox_path` and confirms an entry with `msg_id` is present.
+/// Called immediately after [`append_entry`]'s rename to catch a
+/// concurrent external writer that clobbered our write in the gap.
+fn verify_entry_present(inbox_path: &Path, msg_id: &str) -> Result<(), InboxWriteError> {
+    let content = std::fs::read_to_string(inbox_path).map_err(|source| InboxWriteError::Io {
+        path: inbox_path.to_owned(),
+        source,
+    })?;
+    let entries: Vec<serde_json::Value> =
+        serde_json::from_str(&content).map_err(|source| InboxWriteError::Malformed {
+            path: inbox_path.to_owned(),
+            source,
+        })?;
+    let present = entries
+        .iter()
+        .any(|entry| entry.get("msg_id").and_then(serde_json::Value::as_str) == Some(msg_id));
+    if present {
+        Ok(())
+    } else {
+        Err(InboxWriteError::ConcurrentWriter {
+            path: inbox_path.to_owned(),
+            msg_id: msg_id.to_owned(),
+        })
+    }
 }
 
 #[cfg(test)]
@@ -459,6 +512,38 @@ mod tests {
         let result = append_entry(&paths, "team-x", "alpha", &entry);
         assert!(matches!(result, Err(InboxWriteError::Malformed { .. })));
         assert_eq!(std::fs::read_to_string(&inbox_path).unwrap(), "not json");
+    }
+
+    // ── verify_entry_present: concurrent-writer detection ────────────────────
+
+    #[test]
+    fn verify_entry_present_ok_when_the_msg_id_is_found() {
+        let dir = TempDir::new();
+        let path = dir.0.join("alpha.json");
+        std::fs::write(
+            &path,
+            r#"[{"from":"x","text":"y","msg_id":"keep-me"},{"from":"x","text":"y","msg_id":"other"}]"#,
+        )
+        .unwrap();
+
+        assert!(verify_entry_present(&path, "keep-me").is_ok());
+    }
+
+    #[test]
+    fn verify_entry_present_errors_when_the_msg_id_is_absent() {
+        let dir = TempDir::new();
+        let path = dir.0.join("alpha.json");
+        std::fs::write(
+            &path,
+            r#"[{"from":"x","text":"y","msg_id":"someone-elses-write"}]"#,
+        )
+        .unwrap();
+
+        let result = verify_entry_present(&path, "vanished");
+        assert!(matches!(
+            result,
+            Err(InboxWriteError::ConcurrentWriter { msg_id, .. }) if msg_id == "vanished"
+        ));
     }
 
     #[test]
