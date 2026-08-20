@@ -48,7 +48,7 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::io::{Read as _, Write as _};
+use std::io::{Read, Write as _};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -124,14 +124,22 @@ pub(crate) fn resolve_team_bucket(payload: &Value, teams: &[(String, Option<Stri
 /// A team whose `config.json` fails to parse is skipped, same
 /// degrade-on-malformed-file policy `gather::gather_team` already uses.
 /// Cheap: a handful of small files, read once per hook invocation.
-fn discover_teams() -> Vec<(String, Option<String>)> {
-    let Some(paths) = crate::gather::GatherPaths::from_env() else {
+/// Every team under `teams_root`, paired with its `leadSessionId` (`None`
+/// when the config has none). `teams_root` mirrors `gather::GatherPaths`'s
+/// injectable-path pattern (issue #114 e2e test seam — a tempdir in
+/// tests, [`hook_command`]'s real `GatherPaths::from_env().teams_root`
+/// in production). A team whose `config.json` fails to parse is skipped,
+/// same degrade-on-malformed-file policy `gather::gather_team` already
+/// uses. `None` (root unresolved) degrades to no teams. Cheap: a handful
+/// of small files, read once per hook invocation.
+fn discover_teams_at(teams_root: Option<&Path>) -> Vec<(String, Option<String>)> {
+    let Some(teams_root) = teams_root else {
         return Vec::new();
     };
-    crate::gather::list_team_dirs(&paths.teams_root)
+    crate::gather::list_team_dirs(teams_root)
         .into_iter()
         .filter_map(|team| {
-            let config_path = paths.teams_root.join(&team).join("config.json");
+            let config_path = teams_root.join(&team).join("config.json");
             let config = crate::teamfiles::read_team_config(&config_path).ok()?;
             Some((team, config.lead_session_id))
         })
@@ -151,10 +159,16 @@ fn spool_path_from(
     let base = xdg_state_home
         .map(PathBuf::from)
         .or_else(|| home.map(|home| PathBuf::from(home).join(".local/state")))?;
-    Some(
-        base.join("herdmates/hook-spool")
-            .join(format!("{team_bucket}.jsonl")),
-    )
+    Some(spool_path_at(&base, team_bucket))
+}
+
+/// `base` + team bucket → full spool path. Split out of [`spool_path_from`]
+/// so [`hook_command_from`] (issue #114 e2e test seam) can be handed an
+/// already-resolved base directly (a tempdir in tests), instead of the
+/// `XDG_STATE_HOME`/`HOME` env vars `spool_path_from` reads.
+fn spool_path_at(base: &Path, team_bucket: &str) -> PathBuf {
+    base.join("herdmates/hook-spool")
+        .join(format!("{team_bucket}.jsonl"))
 }
 
 /// `pub(crate)` so `recorder.rs` (issue #100 M3) resolves the exact same
@@ -265,16 +279,19 @@ fn load_gate_config() -> Option<GateConfig> {
 const STDIN_READ_TIMEOUT: Duration = Duration::from_secs(5);
 const STDIN_READ_MAX_BYTES: u64 = 1024 * 1024;
 
-/// Reads stdin (size-capped) on a helper thread and gives up after
+/// Reads `reader` (size-capped) on a helper thread and gives up after
 /// `timeout`. `None` on read error or timeout — the caller exits 0 either
 /// way per the module's all-failures-are-silent contract. On timeout the
 /// helper thread is abandoned; the process exits immediately after, which
-/// reaps it.
-fn read_stdin_bounded(timeout: Duration) -> Option<String> {
+/// reaps it. Generic over `reader` (issue #114: real stdin in production,
+/// an in-memory `Cursor` in tests — the direct seam `read_stdin_bounded`
+/// used to hardcode) rather than a stdin-specific function.
+fn read_bounded(reader: impl Read + Send + 'static, timeout: Duration) -> Option<String> {
     let (sender, receiver) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         let mut input = String::new();
-        let result = std::io::Read::take(std::io::stdin(), STDIN_READ_MAX_BYTES)
+        let result = reader
+            .take(STDIN_READ_MAX_BYTES)
             .read_to_string(&mut input)
             .map(|_| input);
         let _ = sender.send(result);
@@ -282,13 +299,46 @@ fn read_stdin_bounded(timeout: Duration) -> Option<String> {
     receiver.recv_timeout(timeout).ok()?.ok()
 }
 
+/// `herdmates hook <EventName>`: reads the hook event JSON from stdin,
+/// appends one spool line, exits. Thin wrapper resolving real stdin/env
+/// over [`hook_command_from`], the testable core.
 pub fn hook_command(args: &[String]) -> ExitCode {
     let event_name = args
         .first()
         .cloned()
         .unwrap_or_else(|| "unknown".to_owned());
+    let teams_root = crate::gather::GatherPaths::from_env().map(|paths| paths.teams_root);
+    let spool_base = std::env::var_os("XDG_STATE_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/state")));
+    hook_command_from(
+        &event_name,
+        std::io::stdin(),
+        teams_root.as_deref(),
+        spool_base.as_deref(),
+        SystemTime::now(),
+    )
+}
 
-    let Some(input) = read_stdin_bounded(STDIN_READ_TIMEOUT) else {
+/// Testable core of [`hook_command`]. Returns `ExitCode` directly (not the
+/// crate's usual `Result`-through-`exit()` convention in `main.rs`)
+/// because the gating capability needs to reach `ExitCode::from(2)` on
+/// a future `GateDecision::Block` — a plain `Result<(), Error>` can only
+/// reach the crate's existing 0/1 exit codes.
+///
+/// `reader` stands in for stdin, `teams_root`/`spool_base` for the real
+/// env-resolved paths [`discover_teams`]/`default_spool_path` use — the
+/// same explicit-parameter seam `spool_path_from`/`GatherPaths` already
+/// use elsewhere, so a test can point both at a tempdir without touching
+/// real process env vars (issue #114).
+fn hook_command_from(
+    event_name: &str,
+    reader: impl Read + Send + 'static,
+    teams_root: Option<&Path>,
+    spool_base: Option<&Path>,
+    now: SystemTime,
+) -> ExitCode {
+    let Some(input) = read_bounded(reader, STDIN_READ_TIMEOUT) else {
         eprintln!("herdmates hook: failed to read stdin for {event_name} (error or timeout)");
         return ExitCode::SUCCESS;
     };
@@ -301,19 +351,23 @@ pub fn hook_command(args: &[String]) -> ExitCode {
         }
     };
 
-    let envelope = build_envelope(&event_name, payload, SystemTime::now());
-    let teams = discover_teams();
+    let envelope = build_envelope(event_name, payload, now);
+    let teams = discover_teams_at(teams_root);
     let bucket = resolve_team_bucket(&envelope.payload, &teams);
 
-    if let Some(spool_path) = default_spool_path(&bucket) {
-        if let Err(error) = append_line(&spool_path, &envelope_line(&envelope)) {
-            eprintln!(
-                "herdmates hook: failed to append spool entry at {}: {error}",
-                spool_path.display()
-            );
+    match spool_base {
+        Some(base) => {
+            let spool_path = spool_path_at(base, &bucket);
+            if let Err(error) = append_line(&spool_path, &envelope_line(&envelope)) {
+                eprintln!(
+                    "herdmates hook: failed to append spool entry at {}: {error}",
+                    spool_path.display()
+                );
+            }
         }
-    } else {
-        eprintln!("herdmates hook: cannot resolve spool directory (set XDG_STATE_HOME or HOME)");
+        None => {
+            eprintln!("herdmates hook: cannot resolve spool directory (set XDG_STATE_HOME or HOME)")
+        }
     }
 
     ExitCode::from(exit_status(decide_gate(
@@ -549,5 +603,78 @@ mod tests {
     fn exit_status_maps_allow_to_zero_and_block_to_two() {
         assert_eq!(exit_status(GateDecision::Allow), 0);
         assert_eq!(exit_status(GateDecision::Block), 2);
+    }
+
+    // ── read_bounded (issue #114) ────────────────────────────────────────────
+
+    #[test]
+    fn read_bounded_returns_short_input_verbatim() {
+        let result = read_bounded(
+            std::io::Cursor::new(b"hello".to_vec()),
+            Duration::from_secs(1),
+        );
+        assert_eq!(result.as_deref(), Some("hello"));
+    }
+
+    #[test]
+    fn read_bounded_truncates_input_over_the_byte_cap() {
+        let oversize = vec![b'x'; (STDIN_READ_MAX_BYTES + 1) as usize];
+        let result = read_bounded(std::io::Cursor::new(oversize), Duration::from_secs(1));
+        assert_eq!(result.unwrap().len() as u64, STDIN_READ_MAX_BYTES);
+    }
+
+    // ── hook_command_from: end-to-end (issue #114) ───────────────────────────
+
+    /// Real captured field shape for a `TaskCreated` event fired from a
+    /// teammate session (this module's doc comment, live capture
+    /// 2026-07-17, `docs/research/hook-companion-surface-2026-07-16.md`):
+    /// session_id, transcript_path, cwd, prompt_id, hook_event_name,
+    /// task_id, task_subject, task_description, teammate_name, team_name.
+    #[test]
+    fn hook_command_from_writes_the_spool_entry_for_a_real_task_created_payload() {
+        let dir = TempDir::new();
+        let spool_base = dir.path().join("state");
+        let payload = json!({
+            "session_id": "abc123-session",
+            "transcript_path": "/home/x/.claude/projects/-home-x-proj/abc123.jsonl",
+            "cwd": "/home/x/proj",
+            "prompt_id": "prompt-1",
+            "hook_event_name": "TaskCreated",
+            "task_id": "task-42",
+            "task_subject": "Ship the thing",
+            "task_description": "Do the work",
+            "teammate_name": "alpha",
+            "team_name": "wave3",
+        });
+
+        let exit_code = hook_command_from(
+            "TaskCreated",
+            std::io::Cursor::new(payload.to_string().into_bytes()),
+            None, // team_name is present, so the session_id->team fallback is never consulted
+            Some(&spool_base),
+            SystemTime::UNIX_EPOCH + Duration::from_secs(100),
+        );
+
+        assert_eq!(format!("{exit_code:?}"), format!("{:?}", ExitCode::SUCCESS));
+
+        let spool_path = spool_base.join("herdmates/hook-spool/wave3.jsonl");
+        let line = std::fs::read_to_string(&spool_path).expect("spool file written");
+        let envelope: HookEnvelope = serde_json::from_str(line.lines().next().unwrap()).unwrap();
+        assert_eq!(envelope.event, "TaskCreated");
+        assert_eq!(envelope.captured_unix, 100);
+        assert_eq!(envelope.payload["task_id"], "task-42");
+        assert_eq!(envelope.payload["teammate_name"], "alpha");
+    }
+
+    #[test]
+    fn hook_command_from_exits_success_and_skips_the_spool_on_malformed_json() {
+        let exit_code = hook_command_from(
+            "TeammateIdle",
+            std::io::Cursor::new(b"not json".to_vec()),
+            None,
+            None,
+            SystemTime::UNIX_EPOCH,
+        );
+        assert_eq!(format!("{exit_code:?}"), format!("{:?}", ExitCode::SUCCESS));
     }
 }

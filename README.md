@@ -113,7 +113,13 @@ teammates land as first-class herdr panes — proven live end-to-end
   to reason-less "waiting" instead.
 - **Recorder** — `herdmates record --team <name>`: append-only JSONL log
   of the engine's classified deltas (baselines, transitions, task
-  deltas, hook signals). Log schema = engine schema.
+  deltas, hook signals) at `${XDG_STATE_HOME:-~/.local/state}/herdmates/
+  recorder/{team}.jsonl`. Log schema = engine schema. Deltas-only, so
+  growth is bounded by state changes rather than poll ticks, but an
+  unattended long-running `record` still grows the file forever by
+  default — pass `--max-log-bytes N` to rotate it once to
+  `{team}.jsonl.1` (overwriting any previous `.1`) whenever it reaches
+  `N` bytes; omit it (or pass `0`) for the previous unlimited behavior.
 - **Hook companion** — `herdmates hook <event>` registered for Claude
   Code's three team hook events (`TeammateIdle` / `TaskCreated` /
   `TaskCompleted`) spools events per team; board and recorder consume

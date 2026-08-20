@@ -64,6 +64,10 @@ pub enum RecordArgsError {
     InvalidInterval(String),
     #[error("--log-path requires a value")]
     MissingLogPathValue,
+    #[error("--max-log-bytes requires a value")]
+    MissingMaxLogBytesValue,
+    #[error("invalid --max-log-bytes value: {0}")]
+    InvalidMaxLogBytes(String),
 }
 
 /// Default log path: `${XDG_STATE_HOME:-~/.local/state}/herdmates/
@@ -410,6 +414,31 @@ pub fn append_records(log_path: &Path, records: &[Record]) -> Result<(), Recorde
     Ok(())
 }
 
+/// Rotate `log_path` to `{log_path}.1` (overwriting any previous `.1`)
+/// when it has reached or exceeded `max_bytes`, so the next append starts
+/// a fresh file — issue #114: the log otherwise grows forever with no
+/// prune path. `max_bytes == 0` means unlimited (the pre-#114 default;
+/// never rotates). One rotation slot, no numbered series (ponytail: add
+/// a series only if someone asks) — a single rename is cheap enough to
+/// check every tick, no separate "at startup" code path needed. A
+/// missing `log_path` (nothing written yet) is a no-op, not an error.
+fn maybe_rotate_log(log_path: &Path, max_bytes: u64) -> Result<(), RecorderError> {
+    if max_bytes == 0 {
+        return Ok(());
+    }
+    let Ok(metadata) = std::fs::metadata(log_path) else {
+        return Ok(());
+    };
+    if metadata.len() < max_bytes {
+        return Ok(());
+    }
+    let rotated_path = PathBuf::from(format!("{}.1", log_path.display()));
+    std::fs::rename(log_path, &rotated_path).map_err(|source| RecorderError::Write {
+        path: log_path.display().to_string(),
+        source,
+    })
+}
+
 // ─── `herdmates record` subcommand ─────────────────────────────────────────
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -417,6 +446,9 @@ pub(crate) struct RecordArgs {
     pub team: String,
     pub interval_secs: u64,
     pub log_path: Option<PathBuf>,
+    /// `0` (default) = unlimited, preserving pre-#114 behavior. See
+    /// [`maybe_rotate_log`].
+    pub max_log_bytes: u64,
 }
 
 const DEFAULT_INTERVAL_SECS: u64 = 2;
@@ -425,6 +457,7 @@ pub(crate) fn parse_record_args(args: &[String]) -> Result<RecordArgs, RecordArg
     let mut team = None;
     let mut interval_secs = DEFAULT_INTERVAL_SECS;
     let mut log_path = None;
+    let mut max_log_bytes = 0;
 
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
@@ -441,6 +474,14 @@ pub(crate) fn parse_record_args(args: &[String]) -> Result<RecordArgs, RecordArg
                     iter.next().ok_or(RecordArgsError::MissingLogPathValue)?,
                 ));
             }
+            "--max-log-bytes" => {
+                let value = iter
+                    .next()
+                    .ok_or(RecordArgsError::MissingMaxLogBytesValue)?;
+                max_log_bytes = value
+                    .parse()
+                    .map_err(|_| RecordArgsError::InvalidMaxLogBytes(value.clone()))?;
+            }
             _ => {}
         }
     }
@@ -449,6 +490,7 @@ pub(crate) fn parse_record_args(args: &[String]) -> Result<RecordArgs, RecordArg
         team: team.ok_or(RecordArgsError::MissingTeam)?,
         interval_secs,
         log_path,
+        max_log_bytes,
     })
 }
 
@@ -480,6 +522,14 @@ pub fn record_command(args: &[String]) -> Result<(), RecordCommandError> {
     let spool_path = team_hook::default_spool_path(&parsed.team);
 
     loop {
+        // Checked every tick (including the first, i.e. "at startup") —
+        // see maybe_rotate_log's doc comment for why one check suffices.
+        if let Err(error) = maybe_rotate_log(&log_path, parsed.max_log_bytes) {
+            eprintln!(
+                "herdmates record: log rotation at {} failed ({error}); continuing without rotating",
+                log_path.display()
+            );
+        }
         let records = tick_with_spool(
             &mut state,
             &paths,
@@ -570,6 +620,32 @@ mod tests {
         assert_eq!(args.team, "team-x");
         assert_eq!(args.interval_secs, DEFAULT_INTERVAL_SECS);
         assert_eq!(args.log_path, None);
+        assert_eq!(args.max_log_bytes, 0, "0 = unlimited by default");
+    }
+
+    #[test]
+    fn parses_max_log_bytes_override() {
+        let args = parse_record_args(&[
+            "--team".to_owned(),
+            "team-x".to_owned(),
+            "--max-log-bytes".to_owned(),
+            "1000".to_owned(),
+        ])
+        .unwrap();
+        assert_eq!(args.max_log_bytes, 1000);
+    }
+
+    #[test]
+    fn invalid_max_log_bytes_is_an_error() {
+        assert!(matches!(
+            parse_record_args(&[
+                "--team".to_owned(),
+                "t".to_owned(),
+                "--max-log-bytes".to_owned(),
+                "not-a-number".to_owned(),
+            ]),
+            Err(RecordArgsError::InvalidMaxLogBytes(_))
+        ));
     }
 
     #[test]
@@ -818,6 +894,73 @@ mod tests {
         let log_path = dir.path().join("nested/team-x.jsonl");
         append_records(&log_path, &[]).unwrap();
         assert!(!log_path.exists(), "empty tick must not touch the file");
+    }
+
+    // ── maybe_rotate_log (issue #114) ─────────────────────────────────────────
+
+    #[test]
+    fn maybe_rotate_log_is_a_noop_when_max_bytes_is_zero() {
+        let dir = TempDir::new();
+        let log_path = dir.path().join("team-x.jsonl");
+        write(&log_path, &"x".repeat(1000));
+
+        maybe_rotate_log(&log_path, 0).unwrap();
+
+        assert!(log_path.exists(), "0 = unlimited, never rotates");
+        assert!(!PathBuf::from(format!("{}.1", log_path.display())).exists());
+    }
+
+    #[test]
+    fn maybe_rotate_log_is_a_noop_under_the_cap() {
+        let dir = TempDir::new();
+        let log_path = dir.path().join("team-x.jsonl");
+        write(&log_path, "short");
+
+        maybe_rotate_log(&log_path, 1000).unwrap();
+
+        assert_eq!(fs::read_to_string(&log_path).unwrap(), "short");
+        assert!(!PathBuf::from(format!("{}.1", log_path.display())).exists());
+    }
+
+    #[test]
+    fn maybe_rotate_log_is_a_noop_when_the_log_does_not_exist_yet() {
+        let dir = TempDir::new();
+        let log_path = dir.path().join("team-x.jsonl");
+        maybe_rotate_log(&log_path, 10).unwrap();
+        assert!(!log_path.exists());
+    }
+
+    #[test]
+    fn maybe_rotate_log_rotates_to_dot_one_at_or_over_the_cap() {
+        let dir = TempDir::new();
+        let log_path = dir.path().join("team-x.jsonl");
+        write(&log_path, &"x".repeat(1000));
+
+        maybe_rotate_log(&log_path, 1000).unwrap();
+
+        assert!(
+            !log_path.exists(),
+            "rotated away — the next append starts a fresh file"
+        );
+        let rotated_path = PathBuf::from(format!("{}.1", log_path.display()));
+        assert_eq!(fs::read_to_string(&rotated_path).unwrap().len(), 1000);
+    }
+
+    #[test]
+    fn maybe_rotate_log_overwrites_a_previous_dot_one_rather_than_a_series() {
+        let dir = TempDir::new();
+        let log_path = dir.path().join("team-x.jsonl");
+        let rotated_path = PathBuf::from(format!("{}.1", log_path.display()));
+        write(&rotated_path, "stale generation");
+        write(&log_path, &"x".repeat(1000));
+
+        maybe_rotate_log(&log_path, 1000).unwrap();
+
+        assert_eq!(fs::read_to_string(&rotated_path).unwrap().len(), 1000);
+        assert!(
+            !PathBuf::from(format!("{}.2", log_path.display())).exists(),
+            "one rotation slot only, no numbered series"
+        );
     }
 
     #[test]
