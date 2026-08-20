@@ -72,8 +72,12 @@ pub fn lead_env(
 }
 
 /// Compose the single shell command line submitted to the lead pane via
-/// `pane run`: `env 'K=V'... claude --settings '<json>' [extra args]`.
-/// (`pane run` cannot set environment, so `env` carries it.)
+/// `pane run`: `sh -c 'env K=V... claude --settings <json> [extra args]'`.
+/// (`pane run` cannot set environment, so `env` carries it.) The whole
+/// line is wrapped in `sh -c` because the pane runs the user's
+/// interactive zsh: with `CORRECT` set, a bare `claude` command word
+/// triggers a `[nyae]?` spell-correct prompt that hangs the lead (#117).
+/// zsh never corrects quoted words, and `sh` always exists.
 pub fn lead_command_line(env_pairs: &[(String, String)], claude_args: &[String]) -> String {
     let mut parts = vec!["env".to_owned()];
     for (key, value) in env_pairs {
@@ -85,7 +89,7 @@ pub fn lead_command_line(env_pairs: &[(String, String)], claude_args: &[String])
     for arg in claude_args {
         parts.push(shell_quote(arg));
     }
-    parts.join(" ")
+    format!("sh -c {}", shell_quote(&parts.join(" ")))
 }
 
 /// Install (or refresh) the `tmux` symlink in `shim_bin_dir`, pointing at
@@ -322,8 +326,11 @@ mod tests {
         let line = lead_command_line(&pairs, &["--model".to_owned(), "sonnet".to_owned()]);
         assert_eq!(
             line,
-            "env 'TMUX=teammux,0,0' claude --settings '{\"teammateMode\":\"tmux\"}' '--model' 'sonnet'"
+            "sh -c 'env '\"'\"'TMUX=teammux,0,0'\"'\"' claude --settings '\"'\"'{\"teammateMode\":\"tmux\"}'\"'\"' '\"'\"'--model'\"'\"' '\"'\"'sonnet'\"'\"''"
         );
+        // #117 regression: the composed line must be sh -c wrapped so zsh
+        // autocorrect can never prompt on the `claude` command word.
+        assert!(line.starts_with("sh -c '"));
     }
 
     #[cfg(unix)]
