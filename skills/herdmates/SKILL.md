@@ -142,8 +142,10 @@ inbox file rather than re-nudging in a loop.
 
 ## Version discipline
 
-Shim behavior was live-verified against Claude Code 2.1.211 and herdr
-0.7.4 (evidence under `docs/research/`). Both dependencies move fast —
+Shim behavior was live-verified against Claude Code 2.1.237 and herdr
+0.8.0-preview.2026-08-18 (protocol 20) on 2026-08-20, herdmates v2.3.0
+(evidence: `docs/research/shim-e2e-2026-08-20.md`; original 2.1.211 /
+0.7.4 evidence under `docs/research/`). Both dependencies move fast —
 after upgrading either, re-verify the shim end-to-end (spawn one
 teammate, confirm it lands as a pane) before trusting it, and re-snapshot
 `docs/herdr-api-schema.snapshot.json` after any herdr update. When live
