@@ -266,6 +266,32 @@ mod tests {
         }
     }
 
+    // ── read_inboxes ──────────────────────────────────────────────────────────
+
+    /// Regression for issue #112: the real, live-verified on-disk inbox
+    /// shape (`from`/`text`/`timestamp`/`msgV`/`msg_id`/`type`/`read`) must
+    /// parse to non-`None` `from`/`text` through this exact pump path
+    /// (`read_inboxes` → `teamfiles::read_inbox` → `teamfiles::InboxMessage`),
+    /// not just through `teamfiles`'s own direct tests.
+    #[test]
+    fn read_inboxes_parses_the_real_live_inbox_shape() {
+        let temp = TempDir::new();
+        let inboxes_dir = temp.path().join("inboxes");
+        fs::create_dir_all(&inboxes_dir).expect("create inboxes dir");
+        fs::write(
+            inboxes_dir.join("alpha.json"),
+            r#"[{"from":"alpha","text":"Task complete","timestamp":"2026-07-16T09:00:00.000Z","msgV":1,"msg_id":"m1","type":"message","read":false}]"#,
+        )
+        .expect("write real-shape inbox fixture");
+
+        let inboxes = read_inboxes(&inboxes_dir);
+
+        let alpha = inboxes.get("alpha").expect("alpha inbox present");
+        assert_eq!(alpha.len(), 1);
+        assert_eq!(alpha[0].from.as_deref(), Some("alpha"));
+        assert_eq!(alpha[0].text.as_deref(), Some("Task complete"));
+    }
+
     // ── discover_team_dirs ──────────────────────────────────────────────────
 
     #[test]

@@ -84,18 +84,25 @@ pub struct Member {
 }
 
 /// One message from an `inboxes/{name}.json` array, using the LIVE entry
-/// schema (`from`/`text`/..., live-captured in
-/// docs/research/teammux-e2e-2026-07-16 and written by `inbox_write`).
-/// The pre-capture `fromAgentId`/`toAgentId`/`content` shape this struct
-/// originally guessed at never existed on disk — against real entries it
-/// deserialized every field to `None` silently (2026-07-17 review,
-/// finding 1). All fields optional; unknown fields silently ignored.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+/// schema (`from`/`text`/`timestamp`/`msgV`/`msg_id`/`type`/`read`,
+/// live-captured in docs/research/teammux-e2e-2026-07-16 and written by
+/// `inbox_write`). The pre-capture `fromAgentId`/`toAgentId`/`content`
+/// shape this struct originally guessed at never existed on disk — against
+/// real entries it deserialized every field to `None` silently (2026-07-17
+/// review, finding 1). All fields optional; unknown fields silently
+/// ignored. The single canonical inbox wire type (issue #112 dedupe) —
+/// `gather.rs` used to keep its own private copy (`InboxEntryWire`) for
+/// the mailbox-tail/unread-epoch derivations; it now imports this one.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
 pub struct InboxMessage {
     #[serde(default)]
     pub from: Option<String>,
     #[serde(default)]
     pub text: Option<String>,
+    #[serde(default)]
+    pub timestamp: Option<String>,
+    #[serde(default)]
+    pub read: Option<bool>,
 }
 
 /// Aggregated view of one team member: config fields + inbox messages.
@@ -372,6 +379,7 @@ mod tests {
         let msg = InboxMessage {
             from: Some("alpha".to_owned()),
             text: Some("done".to_owned()),
+            ..Default::default()
         };
         let inboxes = BTreeMap::from([("alpha".to_owned(), vec![msg.clone()])]);
 

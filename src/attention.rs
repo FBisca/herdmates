@@ -196,6 +196,7 @@ mod tests {
         let lead = lead_with_inbox(vec![InboxMessage {
             from: Some("alpha@t".to_owned()),
             text: Some("STEP 3 READY".to_owned()),
+            ..Default::default()
         }]);
         let queue = build_attention_queue(&[], &FocusFile::default(), Some(&lead), Some("w1A:p1"));
         assert_eq!(queue.len(), 1);
@@ -213,6 +214,7 @@ mod tests {
             ..lead_with_inbox(vec![InboxMessage {
                 from: Some("beta@t".to_owned()),
                 text: Some("peer chatter".to_owned()),
+                ..Default::default()
             }])
         };
         let queue = build_attention_queue(&[], &FocusFile::default(), Some(&peer), None);
@@ -239,6 +241,7 @@ mod tests {
         let lead = lead_with_inbox(vec![InboxMessage {
             from: Some("alpha@t".to_owned()),
             text: Some("report".to_owned()),
+            ..Default::default()
         }]);
         let queue = build_attention_queue(&agents, &focus, Some(&lead), None);
         assert_eq!(queue.len(), 3);
@@ -252,6 +255,7 @@ mod tests {
         let lead = lead_with_inbox(vec![InboxMessage {
             from: Some("alpha@t".to_owned()),
             text: Some("same message".to_owned()),
+            ..Default::default()
         }]);
         let first = build_attention_queue(&[], &FocusFile::default(), Some(&lead), None);
         let second = build_attention_queue(&[], &FocusFile::default(), Some(&lead), None);

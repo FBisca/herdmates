@@ -211,6 +211,7 @@ mod tests {
         InboxMessage {
             from: Some(from.to_owned()),
             text: Some(content.to_owned()),
+            ..Default::default()
         }
     }
 

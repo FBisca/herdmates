@@ -465,30 +465,13 @@ pub(crate) fn any_owned_task_blocked(tasks: &[TaskFile], name: &str, agent_id: &
 //
 // Read-only: this module never writes an inbox file. Live schema per
 // `docs/research/teammux-e2e-2026-07-16/attempt-2-results.md`: top-level
-// JSON array of `{from, text, timestamp, msgV, msg_id, type, read}`. This
-// is a distinct, more complete shape than `teamfiles::InboxMessage`
-// (camelCase `fromAgentId`/`toAgentId`/`content`, no `read` flag) — that
-// struct predates the live capture and is used elsewhere for the board
-// pump's display text, not touched here (unrelated-code rule; flagged as
-// a future cleanup, not fixed in this pass).
-
-#[derive(Debug, Clone, Deserialize)]
-struct InboxEntryWire {
-    /// Added for the board's mailbox tail (#98) — `oldest_unread_epoch`
-    /// never reads these two, only `timestamp`/`read`; additive fields on
-    /// the same wire struct rather than a second parser over the same file.
-    #[serde(default)]
-    from: Option<String>,
-    #[serde(default)]
-    text: Option<String>,
-    #[serde(default)]
-    timestamp: Option<String>,
-    #[serde(default)]
-    read: Option<bool>,
-}
+// JSON array of `{from, text, timestamp, msgV, msg_id, type, read}`, one
+// parser for the whole crate — `teamfiles::InboxMessage` (issue #112
+// dedupe; this module used to keep a second, near-identical private copy
+// named `InboxEntryWire`).
 
 pub(crate) fn oldest_unread_epoch_from_str(json: &str) -> Option<u64> {
-    let entries: Vec<InboxEntryWire> = serde_json::from_str(json).ok()?;
+    let entries: Vec<teamfiles::InboxMessage> = serde_json::from_str(json).ok()?;
     entries
         .into_iter()
         .filter(|entry| entry.read == Some(false))
@@ -514,7 +497,7 @@ pub struct MailboxEntry {
 }
 
 fn mailbox_entries_from_str(json: &str, agent: &str, now: SystemTime) -> Vec<MailboxEntry> {
-    let Ok(entries) = serde_json::from_str::<Vec<InboxEntryWire>>(json) else {
+    let Ok(entries) = serde_json::from_str::<Vec<teamfiles::InboxMessage>>(json) else {
         return Vec::new();
     };
     entries
