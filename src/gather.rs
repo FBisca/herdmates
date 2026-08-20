@@ -151,13 +151,8 @@ pub fn gather_team<H: HerdrApi>(
                 None
             };
 
-            let inbox_path = inboxes_dir.join(format!("{}.json", member.name));
-            let seconds_since_unread_inbox = oldest_unread_epoch(&inbox_path)
-                .and_then(|oldest_epoch| {
-                    now.duration_since(SystemTime::UNIX_EPOCH + Duration::from_secs(oldest_epoch))
-                        .ok()
-                })
-                .map(|elapsed| elapsed.as_secs());
+            let seconds_since_unread_inbox =
+                seconds_since_unread_inbox(&inboxes_dir.join(format!("{}.json", member.name)), now);
 
             TeammateFacts {
                 name: member.name.clone(),
@@ -444,6 +439,55 @@ pub fn team_task_displays(paths: &GatherPaths, team: &str, now: SystemTime) -> V
         .collect()
 }
 
+/// One task's dependency edges, resolved against the rest of the team's
+/// task files (#123 hook enrichment, ADR-0015 brain layer). The public,
+/// string-typed projection of the private `TaskFile`/`TaskStatus` pair —
+/// same reason `TaskSnapshot` exists: consumers outside this module get
+/// plain data they can format, never the parser's internals.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TaskDependency {
+    pub id: String,
+    pub subject: Option<String>,
+    pub completed: bool,
+    /// Normalized owner (`""`/`null` collapse to `None` at parse time).
+    pub owner: Option<String>,
+    /// `blockedBy` ids that are present in this team's task files AND not
+    /// completed. An id no task file backs is dropped, not assumed
+    /// incomplete — same under-claim rule as [`any_owned_task_blocked`].
+    pub incomplete_blockers: Vec<String>,
+}
+
+pub fn team_task_dependencies(paths: &GatherPaths, team: &str) -> Vec<TaskDependency> {
+    task_dependencies(&read_task_files(&paths.tasks_root.join(team)))
+}
+
+/// Pure core of [`team_task_dependencies`], testable without a tempdir.
+fn task_dependencies(tasks: &[TaskFile]) -> Vec<TaskDependency> {
+    let status_by_id: HashMap<&str, TaskStatus> = tasks
+        .iter()
+        .map(|task| (task.id.as_str(), task.status))
+        .collect();
+    tasks
+        .iter()
+        .map(|task| TaskDependency {
+            id: task.id.clone(),
+            subject: task.subject.clone(),
+            completed: task.status == TaskStatus::Completed,
+            owner: task.owner.clone(),
+            incomplete_blockers: task
+                .blocked_by
+                .iter()
+                .filter(|dep_id| {
+                    status_by_id
+                        .get(dep_id.as_str())
+                        .is_some_and(|status| *status != TaskStatus::Completed)
+                })
+                .cloned()
+                .collect(),
+        })
+        .collect()
+}
+
 /// True when at least one task owned by `name`/`agent_id` has a
 /// `blockedBy` entry whose referenced task is present and not
 /// `completed`. A `blockedBy` id this gather pass never found is never
@@ -486,6 +530,18 @@ pub(crate) fn oldest_unread_epoch_from_str(json: &str) -> Option<u64> {
 fn oldest_unread_epoch(path: &Path) -> Option<u64> {
     let content = std::fs::read_to_string(path).ok()?;
     oldest_unread_epoch_from_str(&content)
+}
+
+/// Age of the oldest unread entry in one inbox file, in seconds. `None`
+/// when the file is missing/malformed or nothing is unread — i.e. the
+/// [`ObservedFacts::seconds_since_unread_inbox`] accelerator has nothing
+/// to say. Shared by [`gather_team`] and the hook enrichment path (#123)
+/// so neither re-derives the epoch arithmetic.
+pub(crate) fn seconds_since_unread_inbox(inbox_path: &Path, now: SystemTime) -> Option<u64> {
+    let oldest_epoch = oldest_unread_epoch(inbox_path)?;
+    now.duration_since(SystemTime::UNIX_EPOCH + Duration::from_secs(oldest_epoch))
+        .ok()
+        .map(|elapsed| elapsed.as_secs())
 }
 
 /// One rendered mailbox-tail line (#98 board stage 3): a single inbox
@@ -732,6 +788,33 @@ mod tests {
         )
         .unwrap()];
         assert!(!any_owned_task_blocked(&tasks, "alpha", "alpha@team"));
+    }
+
+    // ── task_dependencies (#123) ────────────────────────────────────────────
+
+    #[test]
+    fn task_dependencies_keep_only_present_and_incomplete_blockers() {
+        let tasks = vec![
+            parse_task_file_str(r#"{"id":"1","status":"completed"}"#).unwrap(),
+            parse_task_file_str(r#"{"id":"2","status":"in_progress"}"#).unwrap(),
+            parse_task_file_str(
+                r#"{"id":"3","subject":"Ship it","status":"pending","owner":"alpha","blockedBy":["1","2","ghost"]}"#,
+            )
+            .unwrap(),
+        ];
+        let deps = task_dependencies(&tasks);
+        let third = deps.iter().find(|dep| dep.id == "3").unwrap();
+        assert_eq!(third.incomplete_blockers, ["2"]);
+        assert_eq!(third.subject.as_deref(), Some("Ship it"));
+        assert_eq!(third.owner.as_deref(), Some("alpha"));
+        assert!(!third.completed);
+        assert!(deps.iter().find(|dep| dep.id == "1").unwrap().completed);
+    }
+
+    #[test]
+    fn task_dependencies_report_no_blockers_for_an_unblocked_task() {
+        let tasks = vec![parse_task_file_str(r#"{"id":"1","status":"pending"}"#).unwrap()];
+        assert!(task_dependencies(&tasks)[0].incomplete_blockers.is_empty());
     }
 
     // ── inbox unread parsing ────────────────────────────────────────────────

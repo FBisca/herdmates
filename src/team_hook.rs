@@ -39,6 +39,19 @@
 //! the honest resolution, since the `session-<8 chars>` team-name
 //! convention only holds for implicit session teams, not user-named ones.
 //!
+//! ## Enrichment push (issue #123, ADR-0015 §"brain layer" item 1)
+//!
+//! Since v3.1 the hook does one more thing before exiting: it computes
+//! the signal-engine facts behind the event (`enrich`) and posts them
+//! into the hosting session's own inbox socket (`lead_post`). Delivery
+//! into a live session is proven; WHICH session a teammate's hook
+//! reaches (the lead's, per the documented hooks-run-as-lead's-children
+//! model) is still live-unverified — see
+//! `docs/research/hook-socket-enrichment-2026-08-20.md` §4. Everything
+//! about it is best-effort: the
+//! spool write happens first and unconditionally, and any missing env,
+//! unresolvable path, or failed post degrades to silence plus exit 0.
+//!
 //! Spool path mirrors `recorder::default_log_path`'s exact
 //! `${XDG_STATE_HOME:-~/.local/state}/herdmates/...` convention,
 //! deliberately independent of the herdr-plugin install location (see
@@ -312,15 +325,21 @@ pub fn hook_command(args: &[String]) -> ExitCode {
         .first()
         .cloned()
         .unwrap_or_else(|| "unknown".to_owned());
-    let teams_root = crate::gather::GatherPaths::from_env().map(|paths| paths.teams_root);
+    let paths = crate::gather::GatherPaths::from_env();
     let spool_base = std::env::var_os("XDG_STATE_HOME")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/state")));
+    // Feature-detect (ADR-0010): absent socket env → `None` → the
+    // enrichment push is skipped silently. Also the test seam: the unit
+    // tests below always pass `None`, so `cargo test` inside a Claude Code
+    // session can never post into the developer's own lead.
+    let socket = crate::lead_post::SocketTarget::from_env();
     hook_command_from(
         &event_name,
         std::io::stdin(),
-        teams_root.as_deref(),
+        paths.as_ref(),
         spool_base.as_deref(),
+        socket.as_ref(),
         SystemTime::now(),
     )
 }
@@ -331,16 +350,19 @@ pub fn hook_command(args: &[String]) -> ExitCode {
 /// a future `GateDecision::Block` — a plain `Result<(), Error>` can only
 /// reach the crate's existing 0/1 exit codes.
 ///
-/// `reader` stands in for stdin, `teams_root`/`spool_base` for the real
-/// env-resolved paths [`discover_teams`]/`default_spool_path` use — the
+/// `reader` stands in for stdin, `paths`/`spool_base` for the real
+/// env-resolved paths [`discover_teams_at`]/`default_spool_path` use — the
 /// same explicit-parameter seam `spool_path_from`/`GatherPaths` already
 /// use elsewhere, so a test can point both at a tempdir without touching
-/// real process env vars (issue #114).
+/// real process env vars (issue #114). `socket` is the same seam for the
+/// enrichment push (#123): `None` means "no inbox socket", the silent
+/// no-op every test takes.
 fn hook_command_from(
     event_name: &str,
     reader: impl Read + Send + 'static,
-    teams_root: Option<&Path>,
+    paths: Option<&crate::gather::GatherPaths>,
     spool_base: Option<&Path>,
+    socket: Option<&crate::lead_post::SocketTarget>,
     now: SystemTime,
 ) -> ExitCode {
     let Some(input) = read_bounded(reader, STDIN_READ_TIMEOUT) else {
@@ -357,7 +379,7 @@ fn hook_command_from(
     };
 
     let envelope = build_envelope(event_name, payload, now);
-    let teams = discover_teams_at(teams_root);
+    let teams = discover_teams_at(paths.map(|paths| paths.teams_root.as_path()));
     let bucket = resolve_team_bucket(&envelope.payload, &teams);
 
     match spool_base {
@@ -375,10 +397,44 @@ fn hook_command_from(
         }
     }
 
+    push_enrichment(paths, socket, &bucket, event_name, &envelope.payload, now);
+
     ExitCode::from(exit_status(decide_gate(
         load_gate_config().as_ref(),
         &envelope,
     )))
+}
+
+/// Push half of the brain layer (issue #123, ADR-0015 §"brain layer"
+/// item 1): compute the signal-engine facts behind this event and post
+/// them into the hosting lead's own inbox socket, so the lead's model
+/// reads *why* alongside Claude Code's native *what*.
+///
+/// Every arm degrades silently, because this runs on Claude Code's event
+/// path and the module contract is "never block, never fail the host":
+/// no socket env (not a session child, or an older Claude Code) → no-op;
+/// no resolvable paths → no-op; an event we don't model → no message; a
+/// refused, timed-out, or held post → one stderr line and exit 0. The
+/// spool write above already happened either way, so an unreachable lead
+/// never costs us the observation.
+fn push_enrichment(
+    paths: Option<&crate::gather::GatherPaths>,
+    socket: Option<&crate::lead_post::SocketTarget>,
+    team: &str,
+    event_name: &str,
+    payload: &Value,
+    now: SystemTime,
+) {
+    let (Some(paths), Some(socket)) = (paths, socket) else {
+        return;
+    };
+    let Some(text) = crate::enrich::enrichment_for_event(paths, team, event_name, payload, now)
+    else {
+        return;
+    };
+    if let Err(error) = crate::lead_post::post(socket, &text) {
+        eprintln!("herdmates hook: enrichment post failed for {event_name}: {error}");
+    }
 }
 
 #[cfg(test)]
@@ -657,6 +713,7 @@ mod tests {
             std::io::Cursor::new(payload.to_string().into_bytes()),
             None, // team_name is present, so the session_id->team fallback is never consulted
             Some(&spool_base),
+            None, // #123: no inbox socket → the enrichment push is a silent no-op
             SystemTime::UNIX_EPOCH + Duration::from_secs(100),
         );
 
@@ -671,11 +728,105 @@ mod tests {
         assert_eq!(envelope.payload["teammate_name"], "alpha");
     }
 
+    // ── enrichment push (issue #123) ─────────────────────────────────────────
+
+    /// End to end over a fake inbox server: a real `TeammateIdle` payload
+    /// plus a blocked owned task must reach the socket as one `user`
+    /// frame carrying the engine's reason.
+    #[test]
+    fn hook_command_from_posts_the_enrichment_to_the_inbox_socket() {
+        use std::io::Read as _;
+
+        let dir = TempDir::new();
+        let paths = crate::gather::GatherPaths {
+            teams_root: dir.path().join("teams"),
+            tasks_root: dir.path().join("tasks"),
+            projects_root: dir.path().join("projects"),
+        };
+        let tasks_dir = paths.tasks_root.join("wave3");
+        std::fs::create_dir_all(&tasks_dir).unwrap();
+        std::fs::write(tasks_dir.join("1.json"), r#"{"id":"1","status":"pending"}"#).unwrap();
+        std::fs::write(
+            tasks_dir.join("2.json"),
+            r#"{"id":"2","status":"pending","owner":"alpha","blockedBy":["1"]}"#,
+        )
+        .unwrap();
+
+        let socket_path = dir.path().join("inbox.sock");
+        let listener = std::os::unix::net::UnixListener::bind(&socket_path).unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut connection, _) = listener.accept().unwrap();
+            let mut received = String::new();
+            connection.read_to_string(&mut received).unwrap();
+            received
+        });
+
+        let payload = json!({
+            "session_id": "abc",
+            "hook_event_name": "TeammateIdle",
+            "permission_mode": "acceptEdits",
+            "teammate_name": "alpha",
+            "team_name": "wave3",
+        });
+        let exit_code = hook_command_from(
+            "TeammateIdle",
+            std::io::Cursor::new(payload.to_string().into_bytes()),
+            Some(&paths),
+            Some(&dir.path().join("state")),
+            Some(&crate::lead_post::SocketTarget {
+                path: socket_path,
+                token: Some("tok".to_owned()),
+            }),
+            SystemTime::UNIX_EPOCH,
+        );
+        assert_eq!(format!("{exit_code:?}"), format!("{:?}", ExitCode::SUCCESS));
+
+        let received = server.join().unwrap();
+        let message: Value = serde_json::from_str(received.lines().nth(1).unwrap()).unwrap();
+        let content = message["message"]["content"].as_str().unwrap();
+        assert!(
+            content.starts_with(
+                "[herdmates] TeammateIdle alpha — reason: blocked on an incomplete dependency."
+            ),
+            "{content}"
+        );
+        assert!(content.contains("tasks: 2 open, 1 blocked"), "{content}");
+    }
+
+    /// The host must never notice an unreachable lead: the spool line is
+    /// still written and the process still exits 0.
+    #[test]
+    fn a_dead_inbox_socket_still_spools_and_still_exits_zero() {
+        let dir = TempDir::new();
+        let spool_base = dir.path().join("state");
+        let paths = crate::gather::GatherPaths {
+            teams_root: dir.path().join("teams"),
+            tasks_root: dir.path().join("tasks"),
+            projects_root: dir.path().join("projects"),
+        };
+        let exit_code = hook_command_from(
+            "TeammateIdle",
+            std::io::Cursor::new(json!({"team_name": "wave3"}).to_string().into_bytes()),
+            Some(&paths),
+            Some(&spool_base),
+            Some(&crate::lead_post::SocketTarget {
+                path: dir.path().join("nothing-is-listening.sock"),
+                token: None,
+            }),
+            SystemTime::UNIX_EPOCH,
+        );
+        assert_eq!(format!("{exit_code:?}"), format!("{:?}", ExitCode::SUCCESS));
+        assert!(spool_base
+            .join("herdmates/hook-spool/wave3.jsonl")
+            .is_file());
+    }
+
     #[test]
     fn hook_command_from_exits_success_and_skips_the_spool_on_malformed_json() {
         let exit_code = hook_command_from(
             "TeammateIdle",
             std::io::Cursor::new(b"not json".to_vec()),
+            None,
             None,
             None,
             SystemTime::UNIX_EPOCH,

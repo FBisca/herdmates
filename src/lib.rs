@@ -9,10 +9,12 @@
 pub mod brain;
 pub mod dateutil;
 pub mod doctor;
+pub mod enrich;
 pub mod gather;
 pub mod herdr;
 pub mod idmap;
 pub mod inbox_write;
+pub mod lead_post;
 pub mod metadata;
 pub mod paths;
 pub mod pump;
