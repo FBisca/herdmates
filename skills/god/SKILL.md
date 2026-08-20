@@ -1,7 +1,13 @@
 ---
 name: god
-description: Coordinate herdr-agent-team workers from the god session. Use when spawning, briefing, monitoring, messaging, triaging, reviewing, or integrating a team run, including interrupted runs and stopped workers.
+description: "FROZEN LEGACY (ADR-0012, v1.1.0) — do not auto-invoke. The god/worker orchestration model this skill describes is retired, and its commands reference the pre-rename binary `herdr-agent-team`, which no longer exists (the binary is `herdmates`). Kept only as a record until the legacy surface is removed. For current usage, see the `herdmates` skill."
+disable-model-invocation: true
 ---
+
+> **FROZEN LEGACY — ADR-0012.** Every command below invokes
+> `herdr-agent-team`, the pre-rename binary name; the installed binary is
+> `herdmates` and the god/worker model receives no further investment.
+> Read the `herdmates` skill for the current surfaces.
 
 # God-side coordination
 

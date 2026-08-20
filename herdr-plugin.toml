@@ -17,25 +17,25 @@ command = ["sh", "-c", "cargo install --path . --root \"$HOME/.local\""]
 
 [[actions]]
 id = "spawn"
-title = "Spawn agent team"
+title = "Spawn agent team (legacy v1, frozen)"
 contexts = ["workspace"]
 command = ["herdmates", "spawn"]
 
 [[actions]]
 id = "status"
-title = "Team status"
+title = "Team status (legacy v1, frozen)"
 contexts = ["workspace"]
 command = ["herdmates", "status"]
 
 [[actions]]
 id = "kill"
-title = "Kill team"
+title = "Kill team (legacy v1, frozen)"
 contexts = ["workspace"]
 command = ["herdmates", "kill"]
 
 [[actions]]
 id = "open-board"
-title = "Open team control deck"
+title = "Open team control deck (legacy v1, frozen)"
 contexts = ["workspace"]
 command = ["sh", "-c", "\"$HERDR_BIN_PATH\" plugin pane open --plugin caioniehues.herdmates --entrypoint board --placement tab"]
 
@@ -53,7 +53,7 @@ command = ["herdmates", "jump"]
 
 [[panes]]
 id = "board"
-title = "Agent Team control deck"
+title = "Agent Team control deck (legacy v1, frozen)"
 description = "Keyboard-driven worker controls; open as a tab or override placement for a quick popup."
 placement = "tab"
 command = ["herdmates", "board"]

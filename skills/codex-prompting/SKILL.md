@@ -1,7 +1,12 @@
 ---
 name: codex-prompting
-description: Drive Codex pane workers from a god session. Use when writing Codex briefs, choosing Codex launcher flags or models, sending mid-turn follow-ups, or translating a Claude skill-dependent task for a Codex worker.
+description: "FROZEN LEGACY (ADR-0012, v1.1.0) — do not auto-invoke. Belongs to the retired god/worker orchestration model; herdmates no longer drives Codex workers (native Claude Code teams own spawn and messaging). Kept only as a record until the legacy surface is removed."
+disable-model-invocation: true
 ---
+
+> **FROZEN LEGACY — ADR-0012.** This skill belongs to the retired v1.x
+> god/worker model and receives no further investment. See the
+> `herdmates` skill for the current surfaces.
 
 # Codex worker prompting
 
