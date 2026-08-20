@@ -17,14 +17,32 @@ fn main() -> ExitCode {
     let args = args.collect::<Vec<_>>();
 
     match command.as_str() {
+        #[cfg(feature = "legacy-v1")]
+        #[allow(deprecated)]
         "adopt" => exit(adopt::adopt_command(&args)),
+        #[cfg(feature = "legacy-v1")]
+        #[allow(deprecated)]
         "board" => exit(board::board_command(&args)),
+        #[cfg(feature = "legacy-v1")]
+        #[allow(deprecated)]
         "open-report" => exit(board::open_report_command(&args)),
+        #[cfg(feature = "legacy-v1")]
+        #[allow(deprecated)]
         "spawn" => exit(spawn::spawn_command(&args)),
+        #[cfg(feature = "legacy-v1")]
+        #[allow(deprecated)]
         "status" => exit(status_kill::status_command(&args)),
+        #[cfg(feature = "legacy-v1")]
+        #[allow(deprecated)]
         "kill" => exit(status_kill::kill_command(&args)),
+        #[cfg(feature = "legacy-v1")]
+        #[allow(deprecated)]
         "inbox" => exit(god_cli::inbox_command(&args)),
+        #[cfg(feature = "legacy-v1")]
+        #[allow(deprecated)]
         "report" => exit(god_cli::report_command(&args)),
+        #[cfg(feature = "legacy-v1")]
+        #[allow(deprecated)]
         "wait" => match god_cli::wait_command(&args) {
             Ok(verdict) => ExitCode::from(verdict.exit_code()),
             Err(error) => {
@@ -32,7 +50,11 @@ fn main() -> ExitCode {
                 ExitCode::FAILURE
             }
         },
+        #[cfg(feature = "legacy-v1")]
+        #[allow(deprecated)]
         "msg" => exit(msg::msg_command(&args)),
+        #[cfg(feature = "legacy-v1")]
+        #[allow(deprecated)]
         "on-agent-status" => exit(hook::hook_command()),
         "pump-board" => exit(pump::pump_board_command(&args)),
         "teammux-launch" => exit(teammux_launch::teammux_launch_command(&args)),

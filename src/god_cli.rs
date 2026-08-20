@@ -132,6 +132,7 @@ impl WaitVerdict {
     }
 }
 
+#[deprecated(note = "frozen legacy v1 surface (ADR-0012); native Claude Code teams replaced it")]
 pub fn inbox_command(args: &[String]) -> Result<(), GodCliError> {
     let (run_dir, unread, json) = parse_inbox(args)?;
     let rows = collect_snapshot(&select_run(run_dir.as_deref())?)?.rows;
@@ -165,6 +166,7 @@ pub fn inbox_command(args: &[String]) -> Result<(), GodCliError> {
     Ok(())
 }
 
+#[deprecated(note = "frozen legacy v1 surface (ADR-0012); native Claude Code teams replaced it")]
 pub fn report_command(args: &[String]) -> Result<(), GodCliError> {
     let (worker, run_dir, head) = parse_report(args)?;
     let run_dir = select_run(run_dir.as_deref())?;
@@ -194,6 +196,7 @@ pub fn report_command(args: &[String]) -> Result<(), GodCliError> {
     Ok(())
 }
 
+#[deprecated(note = "frozen legacy v1 surface (ADR-0012); native Claude Code teams replaced it")]
 pub fn wait_command(args: &[String]) -> Result<WaitVerdict, GodCliError> {
     let (run_dir, until, timeout, json) = parse_wait(args)?;
     let run_dir = select_wait_run(run_dir.as_deref())?;

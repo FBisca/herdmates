@@ -154,6 +154,7 @@ impl SetupRunner for ProcessSetupRunner {
     }
 }
 
+#[deprecated(note = "frozen legacy v1 surface (ADR-0012); native Claude Code teams replaced it")]
 pub fn spawn_command(args: &[String]) -> Result<(), SpawnError> {
     if args.iter().any(|argument| argument == "--dry-run") {
         return dry_run_command(args).map_err(SpawnError::from);

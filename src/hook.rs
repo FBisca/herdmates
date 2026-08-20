@@ -48,6 +48,7 @@ struct EventEnvelope {
     data: Value,
 }
 
+#[deprecated(note = "frozen legacy v1 surface (ADR-0012); native Claude Code teams replaced it")]
 pub fn hook_command() -> Result<(), HookError> {
     let event_json = std::env::var("HERDR_PLUGIN_EVENT_JSON")
         .map_err(|_| HookError::MissingEnvironment("HERDR_PLUGIN_EVENT_JSON"))?;

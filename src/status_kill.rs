@@ -74,6 +74,7 @@ struct WorkerStatus {
     last_report_time_unix_secs: Option<u64>,
 }
 
+#[deprecated(note = "frozen legacy v1 surface (ADR-0012); native Claude Code teams replaced it")]
 pub fn status_command(args: &[String]) -> Result<(), StatusKillError> {
     let (run_dir, json) = parse_command_args(args, "--json", STATUS_USAGE)?;
     let rendered = status_run(&run_dir, json, &HerdrClient::from_env())?;
@@ -81,6 +82,7 @@ pub fn status_command(args: &[String]) -> Result<(), StatusKillError> {
     Ok(())
 }
 
+#[deprecated(note = "frozen legacy v1 surface (ADR-0012); native Claude Code teams replaced it")]
 pub fn kill_command(args: &[String]) -> Result<(), StatusKillError> {
     let (run_dir, remove_worktrees, worker) = parse_kill_args(args)?;
     if let Some(worker) = worker {

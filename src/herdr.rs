@@ -727,6 +727,7 @@ pub(crate) mod test_support {
     }
 
     impl BriefOrder {
+        #[cfg_attr(not(feature = "legacy-v1"), allow(dead_code))]
         pub fn new(panes: impl IntoIterator<Item = impl Into<String>>) -> Self {
             Self {
                 remaining: Mutex::new(panes.into_iter().map(Into::into).collect()),
@@ -818,6 +819,7 @@ pub(crate) mod test_support {
         pub fn calls(&self) -> Vec<String> {
             self.calls.borrow().clone()
         }
+        #[cfg_attr(not(feature = "legacy-v1"), allow(dead_code))]
         pub fn protocol_snapshots(&self) -> Vec<BTreeMap<PathBuf, String>> {
             self.protocol_snapshots.borrow().clone()
         }

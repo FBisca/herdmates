@@ -665,6 +665,7 @@ brief = "briefs/reviewer-1.md"
     }
 
     #[test]
+    #[allow(deprecated)]
     fn non_dry_run_defers_to_ticket_07_without_loading_launchers() {
         let error = spawn_command(&[])
             .expect_err("real spawn must remain deferred")

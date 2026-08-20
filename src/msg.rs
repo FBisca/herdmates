@@ -118,6 +118,7 @@ enum MessageOutcome {
     Enqueued(PathBuf),
 }
 
+#[deprecated(note = "frozen legacy v1 surface (ADR-0012); native Claude Code teams replaced it")]
 pub fn msg_command(args: &[String]) -> Result<(), MsgError> {
     let parsed = parse_msg_arguments(args)?;
     if parsed.attention && parsed.target != "god" {
@@ -936,6 +937,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn attention_rejects_non_singular_god_before_run_resolution() {
         let error = msg_command(&["all".into(), "text".into(), "--attention".into()]).unwrap_err();
         assert!(matches!(error, MsgError::Arguments(_)));
@@ -1124,6 +1126,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn ack_rejects_god_multi_target_and_attention_combinations() {
         for args in [
             vec!["god".to_owned(), "text".to_owned(), "--ack".to_owned()],

@@ -210,6 +210,7 @@ pub fn render(snapshot: &BoardSnapshot, selection: usize) -> String {
     output
 }
 
+#[deprecated(note = "frozen legacy v1 surface (ADR-0012); native Claude Code teams replaced it")]
 pub fn board_command(args: &[String]) -> Result<(), BoardError> {
     let run_dir = select_run(args)?;
     let fallback = RunCollector { run_dir };
@@ -230,6 +231,7 @@ pub fn board_command(args: &[String]) -> Result<(), BoardError> {
     run_board(fallback)
 }
 
+#[deprecated(note = "frozen legacy v1 surface (ADR-0012); native Claude Code teams replaced it")]
 pub fn open_report_command(args: &[String]) -> Result<(), BoardError> {
     let path = if let Ok(url) = env::var("HERDR_PLUGIN_CLICKED_URL") {
         PathBuf::from(url.trim_start_matches("report:"))

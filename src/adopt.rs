@@ -128,6 +128,7 @@ enum AdoptDisposition {
     NothingToDo,
 }
 
+#[deprecated(note = "frozen legacy v1 surface (ADR-0012); native Claude Code teams replaced it")]
 pub fn adopt_command(args: &[String]) -> Result<(), AdoptError> {
     let mut arguments = parse_adopt_arguments(args)?;
     let current_dir = env::current_dir().map_err(AdoptError::CurrentDirectory)?;
