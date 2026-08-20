@@ -75,6 +75,7 @@
 
 use crate::herdr::HerdrApi;
 use crate::idmap::IdMap;
+use crate::metadata::{MetadataCapabilities, MetadataUpdate};
 use crate::tmuxargs::{self, DisplayField, ParseError, TmuxId, Verb};
 use std::process::ExitCode;
 
@@ -226,7 +227,12 @@ fn kill_pane<H: HerdrApi>(herdr: &H, idmap: &IdMap, pane: &TmuxId) -> DispatchOu
     }
 }
 
-/// `select-pane -t %N -T TITLE`: rename the herdr pane.
+/// `select-pane -t %N -T TITLE`: rename the herdr pane. Also publishes
+/// `title` as display-only `--display-agent` pane metadata (issue #104:
+/// herdr's agent-list API has no label field, so surfaces like reviewr's
+/// Send picker only ever see the agent kind unless this is set) — best
+/// effort, never turns a metadata failure into a dispatch failure, since
+/// the title rename is the operation callers actually depend on.
 fn select_pane_title<H: HerdrApi>(
     herdr: &H,
     idmap: &IdMap,
@@ -238,13 +244,39 @@ fn select_pane_title<H: HerdrApi>(
         None => return unknown_tmux_id("select-pane", pane.as_str()),
     };
     match herdr.pane_rename(&herdr_pane_id, title) {
-        Ok(()) => DispatchOutcome::Ok {
-            stdout: String::new(),
-        },
+        Ok(()) => {
+            publish_display_agent(herdr, &herdr_pane_id, title);
+            DispatchOutcome::Ok {
+                stdout: String::new(),
+            }
+        }
         Err(error) => DispatchOutcome::Error {
             message: format!("teammux: select-pane: herdr pane rename failed: {error}"),
         },
     }
+}
+
+/// Best-effort `herdr pane report-metadata --display-agent <name>`,
+/// schema-gated via [`MetadataCapabilities`] so it degrades cleanly on an
+/// older herdr. Swallows every failure (schema fetch, capability absent,
+/// publish error) — see [`select_pane_title`]'s doc comment.
+fn publish_display_agent<H: HerdrApi>(herdr: &H, herdr_pane_id: &str, name: &str) {
+    let Ok(schema) = herdr.api_schema() else {
+        return;
+    };
+    let capabilities = MetadataCapabilities::from_schema(&schema);
+    if !capabilities.display_agent {
+        return;
+    }
+    let update = MetadataUpdate {
+        title: None,
+        display_agent: Some(name.to_owned()),
+        custom_status: None,
+        state_label: None,
+        seq: None,
+        ttl_ms: None,
+    };
+    let _ = herdr.pane_report_metadata(herdr_pane_id, &update);
 }
 
 /// `resize-pane -t %N -x AMOUNT`: herdr models resize as a directional
@@ -272,7 +304,7 @@ fn resize_pane<H: HerdrApi>(
                 message: format!(
                     "teammux: resize-pane: unsupported amount `{amount}` (expected a percentage like `30%`)"
                 ),
-            }
+            };
         }
     };
     match herdr.pane_resize(&herdr_pane_id, "right", Some(ratio)) {
@@ -317,7 +349,7 @@ fn split_window<H: HerdrApi>(
                     message: format!(
                         "teammux: split-window: unsupported size `{size}` (expected a percentage like `70%`)"
                     ),
-                }
+                };
             }
         },
     };
@@ -326,7 +358,7 @@ fn split_window<H: HerdrApi>(
         Err(error) => {
             return DispatchOutcome::Error {
                 message: format!("teammux: split-window: herdr pane split failed: {error}"),
-            }
+            };
         }
     };
     match IdMap::allocate(idmap.path(), '%', info.pane_id) {
@@ -361,7 +393,7 @@ fn display_window_id<H: HerdrApi>(herdr: &H, idmap: &IdMap, pane: &TmuxId) -> Di
         Err(error) => {
             return DispatchOutcome::Error {
                 message: format!("teammux: display-message: herdr pane get failed: {error}"),
-            }
+            };
         }
     };
     let Some(herdr_tab_id) = info.tab_id else {
@@ -400,7 +432,7 @@ fn pane_geometry<H: HerdrApi>(
         Err(error) => {
             return DispatchOutcome::Error {
                 message: format!("teammux: display-message: herdr pane layout failed: {error}"),
-            }
+            };
         }
     };
     let Some(rect) = layout
@@ -446,7 +478,7 @@ fn window_geometry<H: HerdrApi>(
         Err(error) => {
             return DispatchOutcome::Error {
                 message: format!("teammux: display-message: herdr pane list failed: {error}"),
-            }
+            };
         }
     };
     let Some(representative) = panes
@@ -464,7 +496,7 @@ fn window_geometry<H: HerdrApi>(
         Err(error) => {
             return DispatchOutcome::Error {
                 message: format!("teammux: display-message: herdr pane layout failed: {error}"),
-            }
+            };
         }
     };
     let value = match field {
@@ -494,7 +526,7 @@ fn list_pane_ids<H: HerdrApi>(herdr: &H, idmap: &IdMap, window: &TmuxId) -> Disp
         Err(error) => {
             return DispatchOutcome::Error {
                 message: format!("teammux: list-panes: herdr pane list failed: {error}"),
-            }
+            };
         }
     };
 
@@ -519,7 +551,7 @@ fn list_pane_ids<H: HerdrApi>(herdr: &H, idmap: &IdMap, window: &TmuxId) -> Disp
                                 "teammux: list-panes: failed to lazily register herdr pane `{}` in tab `{herdr_tab_id}`: {error}",
                                 pane.pane_id
                             ),
-                        }
+                        };
                     }
                 }
             }
@@ -1316,6 +1348,116 @@ mod tests {
             .calls()
             .iter()
             .any(|call| call == "pane_rename:w1A:p6:alpha"));
+    }
+
+    /// Records the display_agent update it receives, gated on a schema
+    /// that advertises the capability. Mirrors the local-struct pattern
+    /// `hook.rs`'s `metadata_payload_includes_...` test already uses
+    /// rather than growing shared `FakeHerdr` with schema/metadata knobs.
+    #[derive(Default)]
+    struct DisplayAgentHerdr {
+        update: std::cell::RefCell<Option<crate::metadata::MetadataUpdate>>,
+        fail_publish: bool,
+    }
+
+    impl HerdrApi for DisplayAgentHerdr {
+        fn pane_rename(&self, _: &str, _: &str) -> Result<(), crate::herdr::HerdrError> {
+            Ok(())
+        }
+        fn api_schema(&self) -> Result<String, crate::herdr::HerdrError> {
+            Ok(r#"{"schemas":{"request":{"$defs":{"PaneReportMetadataParams":{"properties":{"pane_id":{},"source":{},"display_agent":{}}}}}}}"#.to_owned())
+        }
+        fn pane_report_metadata(
+            &self,
+            _: &str,
+            update: &crate::metadata::MetadataUpdate,
+        ) -> Result<(), crate::herdr::HerdrError> {
+            if self.fail_publish {
+                return Err(FakeHerdr::command_error());
+            }
+            *self.update.borrow_mut() = Some(update.clone());
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn select_pane_title_publishes_display_agent_when_the_capability_is_supported() {
+        let idmap = temp_idmap(&[("%1", "w1A:p6")]);
+        let herdr = DisplayAgentHerdr::default();
+
+        let outcome = dispatch(
+            &herdr,
+            &idmap,
+            call(Verb::SelectPaneTitle {
+                pane: TmuxId::parse("%1").unwrap(),
+                title: "agent-1".to_owned(),
+            }),
+        );
+        assert_eq!(
+            outcome,
+            DispatchOutcome::Ok {
+                stdout: String::new()
+            }
+        );
+        assert_eq!(
+            herdr
+                .update
+                .borrow()
+                .as_ref()
+                .unwrap()
+                .display_agent
+                .as_deref(),
+            Some("agent-1")
+        );
+    }
+
+    #[test]
+    fn select_pane_title_still_succeeds_when_the_metadata_capability_is_absent() {
+        let idmap = temp_idmap(&[("%1", "w1A:p6")]);
+        let fake = FakeHerdr::default(); // api_schema() -> "{}", no display_agent capability
+
+        let outcome = dispatch(
+            &fake,
+            &idmap,
+            call(Verb::SelectPaneTitle {
+                pane: TmuxId::parse("%1").unwrap(),
+                title: "agent-1".to_owned(),
+            }),
+        );
+        assert_eq!(
+            outcome,
+            DispatchOutcome::Ok {
+                stdout: String::new()
+            }
+        );
+        assert!(!fake
+            .calls()
+            .iter()
+            .any(|call| call.starts_with("pane_report_metadata")));
+    }
+
+    #[test]
+    fn select_pane_title_still_succeeds_when_the_metadata_publish_errors() {
+        let idmap = temp_idmap(&[("%1", "w1A:p6")]);
+        let herdr = DisplayAgentHerdr {
+            fail_publish: true,
+            ..Default::default()
+        };
+
+        let outcome = dispatch(
+            &herdr,
+            &idmap,
+            call(Verb::SelectPaneTitle {
+                pane: TmuxId::parse("%1").unwrap(),
+                title: "agent-1".to_owned(),
+            }),
+        );
+        assert_eq!(
+            outcome,
+            DispatchOutcome::Ok {
+                stdout: String::new()
+            }
+        );
     }
 
     #[test]
