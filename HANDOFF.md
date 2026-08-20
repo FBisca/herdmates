@@ -1,8 +1,37 @@
 # Handoff — current state
 
-Updated 2026-08-20 (evening: feature re-baseline decided, ADR-0015).
+Updated 2026-08-21 (v3.0.0 SHIPPED; v3.1 built, unpushed; brain-layer wave
+done).
 
-## Where things stand
+## Where things stand (2026-08-21)
+
+- **v3.0.0 released** 2026-08-20 (pushed + tagged): #117 sh-c fix, #119
+  legacy-v1 deleted (−13.9k loc), #120 board/focus cluster deleted (−2.8k),
+  #121 version bump + manifest cleanup (only `[[build]]` remains) + ADR-0015
+  doc alignment. 259 tests at release.
+- **v3.1 complete but UNPUSHED on local main (4 commits, 321 tests, gate
+  clean)**: #122 brain verbs `why`/`deadlocks`/`roster` (src/brain.rs;
+  team resolved from CLAUDE_CODE_SESSION_ID vs leadSessionId), #123 hook
+  enrichment via own-child socket post (src/lead_post.rs + src/enrich.rs;
+  LIVE-verified delivery incl. verifiedPeerPid; pending-live items + runbook
+  in docs/research/hook-socket-enrichment-2026-08-20.md §4–5), #124 sidebar
+  5-state priority tokens ("!! needs-you" marked; reuses brain::five_state,
+  single-source rule #90). Release = Caio's word + bump to 3.1.0 + tag.
+- **Open tickets**: #125 (dead auto-pump `maybe_pump` + dead metadata.rs +
+  lead-only state rendering — delete-vs-rewire), #126 (Stop-hook/asyncRewake
+  push spike — external→lead injection prior art from agent-teams-mcp; verify
+  asyncRewake against official docs first), #127 (boundary-crossing QA pairs
+  for our seams + runnable golden-rules checks; the #121 stale-manifest bug
+  was this class).
+- **Upstream**: posted the socket-seam findings on claude-code#88332
+  (issuecomment-5362847742) — fact-checked against the evidence doc.
+- **Team/process** (user-level, affects work here): agent roster in
+  ~/.claude/agents/ (implementer/reviewer/researcher/scribe/miner) — full
+  toolsets, SendMessage reporting, opus reviewer gate on every non-trivial
+  diff (measured: it caught real bugs both waves). Playbook-skills design
+  done, build pending — see ~/.claude/playbook-handoff-2026-08-21.md.
+
+## Previous state (2026-08-20, superseded above)
 
 - **ADR-0015 accepted (2026-08-20): feature re-baseline, "the lead is
   mission control."** Full evidence trail in
