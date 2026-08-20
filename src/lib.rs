@@ -12,6 +12,7 @@ pub mod attention;
 pub mod audit;
 pub mod board;
 pub mod dateutil;
+pub mod doctor;
 pub mod focus_pane;
 pub mod focusfile;
 pub mod gather;

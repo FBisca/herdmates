@@ -24,6 +24,12 @@ command -v herdmates            # binary on PATH (~/.local/bin)
 test -n "${HERDR_PANE_ID:-}"    # inside a herdr-managed pane (pane surfaces only)
 ```
 
+Anything misbehaving (board empty, hooks not firing, stale binary)?
+Run `herdmates doctor` first — one line per check (binary/PATH, the
+three team hooks in `~/.claude/settings.json`, state dir, herdr
+reachability + protocol match, the teams-env hint), non-zero exit if
+any check fails.
+
 - No binary → the plugin is not installed. Install with
   `herdr plugin install caioniehues/herdmates` (runs
   `cargo install --path . --root "$HOME/.local"`; a plain `cargo build`

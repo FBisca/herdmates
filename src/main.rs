@@ -54,9 +54,12 @@ fn main() -> ExitCode {
         // `hook` (frozen v1.1.0, bound to `on-agent-status` above) —
         // different event source, different payload shape, no shared code.
         "hook" => team_hook::hook_command(&args),
+        // Issue #106 static half: self-check subcommand (--probe half
+        // blocked on #105, not implemented here).
+        "doctor" => doctor::doctor_command(&args),
         "" | "help" | "--help" | "-h" => {
             eprintln!(
-                "herdmates <adopt|board|spawn|status|kill|inbox|report|wait|msg|open-report|on-agent-status|pump-board|teammux-launch|jump|focus|record|pane-board|hook>"
+                "herdmates <adopt|board|spawn|status|kill|inbox|report|wait|msg|open-report|on-agent-status|pump-board|teammux-launch|jump|focus|record|pane-board|hook|doctor>"
             );
             ExitCode::SUCCESS
         }
