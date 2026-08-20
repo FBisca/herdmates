@@ -215,7 +215,7 @@ pub fn parse(argv: &[String]) -> Result<ParsedCall, ParseError> {
         other => {
             return Err(ParseError::UnrecognizedVerb {
                 verb: other.to_owned(),
-            })
+            });
         }
     };
 
@@ -303,7 +303,7 @@ fn parse_split_window(args: &mut VecDeque<&str>) -> Result<Verb, ParseError> {
             return Err(ParseError::UnrecognizedShape {
                 verb: "split-window".to_owned(),
                 argv: other.into_iter().map(str::to_owned).collect(),
-            })
+            });
         }
     };
     let size = if args.front() == Some(&"-l") {
@@ -344,7 +344,7 @@ fn parse_set_option(args: &mut VecDeque<&str>) -> Result<Verb, ParseError> {
             return Err(ParseError::UnrecognizedShape {
                 verb: "set-option".to_owned(),
                 argv: other.into_iter().map(str::to_owned).collect(),
-            })
+            });
         }
     };
     expect_flag(args, "-t", "set-option")?;

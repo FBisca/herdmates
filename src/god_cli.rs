@@ -207,7 +207,7 @@ pub fn wait_command(args: &[String]) -> Result<WaitVerdict, GodCliError> {
         Err(e) => {
             return Err(GodCliError::Usage(format!(
                 "HERDR_TEAM_BACKEND=socket failed: {e}"
-            )))
+            )));
         }
     };
     #[cfg(not(unix))]

@@ -558,7 +558,7 @@ fn enqueue_message(run_dir: &Path, target: &str, text: &str) -> Result<PathBuf, 
                     action: "create queued message",
                     path,
                     source,
-                })
+                });
             }
         };
 

@@ -53,7 +53,7 @@ pub fn load_launcher_table(config_dir: &Path) -> Result<LauncherTable, LauncherE
     let contents = match fs::read_to_string(&config_path) {
         Ok(contents) => contents,
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            return Ok(default_launcher_table())
+            return Ok(default_launcher_table());
         }
         Err(source) => {
             return Err(LauncherError::Read {

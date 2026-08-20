@@ -102,7 +102,7 @@ impl<C: HerdrApi> CollectorSocketController<C> {
         let result = match &mut state.phase {
             LifecyclePhase::Subscribed(subscription) => subscription.poll(remaining),
             LifecyclePhase::Terminal | LifecyclePhase::Exhausted => {
-                return ControllerPoll::Terminal
+                return ControllerPoll::Terminal;
             }
             LifecyclePhase::NeedSnapshot => return ControllerPoll::ReconnectPending,
             LifecyclePhase::Ready => unreachable!("subscription established above"),
@@ -125,10 +125,10 @@ impl<C: HerdrApi> CollectorSocketController<C> {
     fn ensure_snapshot(&self, state: &mut LifecycleState) -> ControllerPoll {
         match state.phase {
             LifecyclePhase::Ready | LifecyclePhase::Subscribed(_) => {
-                return ControllerPoll::Timeout
+                return ControllerPoll::Timeout;
             }
             LifecyclePhase::Terminal | LifecyclePhase::Exhausted => {
-                return ControllerPoll::Terminal
+                return ControllerPoll::Terminal;
             }
             LifecyclePhase::NeedSnapshot => {}
         }

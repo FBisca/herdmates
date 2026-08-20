@@ -55,7 +55,9 @@ pub enum AdoptError {
     #[error("cannot adopt into ended run `{run_dir}`")]
     InactiveRun { run_dir: PathBuf },
 
-    #[error("cannot adopt into mesh run `{run_dir}`; immutable peer protocols cannot include the newcomer")]
+    #[error(
+        "cannot adopt into mesh run `{run_dir}`; immutable peer protocols cannot include the newcomer"
+    )]
     MeshRun { run_dir: PathBuf },
 
     #[error(

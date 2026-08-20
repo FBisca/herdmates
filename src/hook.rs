@@ -299,7 +299,7 @@ fn sweep_stale_claims(run_dir: &Path, target: &str) -> Result<(), HookError> {
                 action: "read message outbox",
                 path: outbox_dir,
                 source,
-            })
+            });
         }
     };
     for entry in entries {
@@ -415,7 +415,7 @@ fn queued_message_paths(run_dir: &Path, target: &str) -> Result<Vec<PathBuf>, Ho
                 action: "read message outbox",
                 path: outbox_dir,
                 source,
-            })
+            });
         }
     };
 

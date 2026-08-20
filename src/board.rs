@@ -184,7 +184,12 @@ pub fn action_args(
 }
 
 pub fn render(snapshot: &BoardSnapshot, selection: usize) -> String {
-    let mut output = format!(" BOARD · {} · {} · {} workers\n\n     WORKER       STATE      PANE      TASK                       REPORT\n", snapshot.team, snapshot.lifecycle, snapshot.workers.len());
+    let mut output = format!(
+        " BOARD · {} · {} · {} workers\n\n     WORKER       STATE      PANE      TASK                       REPORT\n",
+        snapshot.team,
+        snapshot.lifecycle,
+        snapshot.workers.len()
+    );
     for (index, worker) in snapshot.workers.iter().enumerate() {
         let marker = if index == selection { " ▶ " } else { "   " };
         let report = worker
@@ -219,7 +224,7 @@ pub fn board_command(args: &[String]) -> Result<(), BoardError> {
         Err(e) => {
             return Err(BoardError::Usage(format!(
                 "HERDR_TEAM_BACKEND=socket failed: {e}"
-            )))
+            )));
         }
     }
     run_board(fallback)
@@ -261,7 +266,7 @@ fn collect_run(run_dir: &Path) -> Result<BoardSnapshot, BoardError> {
             return Err(BoardError::Inbox {
                 path: mailbox,
                 source,
-            })
+            });
         }
     };
     let workers = run

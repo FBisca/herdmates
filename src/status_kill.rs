@@ -137,7 +137,7 @@ fn parse_kill_args(args: &[String]) -> Result<(PathBuf, bool, Option<String>), S
             "--remove-worktrees" => {
                 return Err(StatusKillError::Usage(format!(
                     "duplicate option --remove-worktrees; {KILL_USAGE}"
-                )))
+                )));
             }
             "--worker" => {
                 index += 1;
@@ -153,12 +153,12 @@ fn parse_kill_args(args: &[String]) -> Result<(PathBuf, bool, Option<String>), S
             value if value.starts_with('-') => {
                 return Err(StatusKillError::Usage(format!(
                     "unknown option {value}; {KILL_USAGE}"
-                )))
+                )));
             }
             value if run_dir.replace(PathBuf::from(value)).is_some() => {
                 return Err(StatusKillError::Usage(format!(
                     "expected one run directory; {KILL_USAGE}"
-                )))
+                )));
             }
             _ => {}
         }

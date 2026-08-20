@@ -586,7 +586,7 @@ fn ensure_pending_resources<H: HerdrApi, S: SetupRunner>(
                 return Err(SpawnError::MissingWorktree {
                     worker: worker.name.clone(),
                     path,
-                })
+                });
             }
             None => prepare_worker_cwd(spec, worker, run, herdr, setup_runner)?,
         }
