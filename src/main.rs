@@ -1,7 +1,8 @@
 //! herdmates — Herdr plugin binary.
 //!
 //! Current surfaces: `teammux-launch`, `pump-board`, `record`, `hook`,
-//! `doctor`.
+//! `doctor`, plus the v3.1 brain-layer pull verbs `why`/`deadlocks`/
+//! `roster` (issue #122, ADR-0015).
 
 use std::fmt::Display;
 use std::process::ExitCode;
@@ -31,8 +32,16 @@ fn main() -> ExitCode {
         // Issue #106 static half: self-check subcommand (--probe half
         // blocked on #105, not implemented here).
         "doctor" => doctor::doctor_command(&args),
+        // Issue #122 (ADR-0015 brain layer, pull path): lead-facing skill
+        // verbs, team resolved from the calling session's own id — never
+        // a --team flag, never a guess (see brain.rs module doc).
+        "why" => exit(brain::why_command(&args)),
+        "deadlocks" => exit(brain::deadlocks_command(&args)),
+        "roster" => exit(brain::roster_command(&args)),
         "" | "help" | "--help" | "-h" => {
-            eprintln!("herdmates <pump-board|teammux-launch|record|hook|doctor>");
+            eprintln!(
+                "herdmates <pump-board|teammux-launch|record|hook|doctor|why|deadlocks|roster>"
+            );
             ExitCode::SUCCESS
         }
         other => {

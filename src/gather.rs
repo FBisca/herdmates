@@ -417,6 +417,10 @@ pub struct TaskDisplay {
     /// find the selected agent's owned in-progress task.
     pub owner: Option<String>,
     pub seconds_since_modified: Option<u64>,
+    /// Raw `blockedBy` ids, verbatim (issue #122: `brain::detect_status_lag`
+    /// needs the dependency edges to find a stalled task's dependents;
+    /// nothing before it needed this field, so it wasn't carried through).
+    pub blocked_by: Vec<String>,
 }
 
 pub fn team_task_displays(paths: &GatherPaths, team: &str, now: SystemTime) -> Vec<TaskDisplay> {
@@ -434,6 +438,7 @@ pub fn team_task_displays(paths: &GatherPaths, team: &str, now: SystemTime) -> V
                 status: task.status.as_str().to_owned(),
                 owner: task.owner,
                 seconds_since_modified,
+                blocked_by: task.blocked_by,
             }
         })
         .collect()

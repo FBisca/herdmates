@@ -1,6 +1,6 @@
 ---
 name: herdmates
-description: "Host and observe Claude Code agent teams in herdr via the herdmates plugin. Use when the user mentions herdmates, teammux, the recorder, or asks to launch, record, or hook a Claude Code team running in herdr panes. Not for general herdr pane control (use the herdr skill) and not for orchestrating work yourself — native Claude Code teams own spawn, messaging, and lifecycle."
+description: "Host and observe Claude Code agent teams in herdr via the herdmates plugin. Use when the user mentions herdmates, teammux, the recorder, or asks to launch, record, or hook a Claude Code team running in herdr panes — or when YOU are a team lead wondering why a teammate is stuck, whether anything is deadlocked, or who's on the team (herdmates why/deadlocks/roster). Not for general herdr pane control (use the herdr skill) and not for orchestrating work yourself — native Claude Code teams own spawn, messaging, and lifecycle."
 ---
 
 # Herdmates
@@ -81,6 +81,41 @@ teammate-state truth; strict precedence permission-prompt > blocked >
 stalled > turn-complete). Doctrine: **never display a wrong reason** —
 a teammate the engine cannot classify is reason-less "waiting", and
 that is correct behavior, not a bug to work around.
+
+## Ask about your own team (lead-facing verbs)
+
+If you are the **team lead** (you spawned teammates via `teammux-launch`
+and this is that session), three verbs answer the questions the ambient
+surfaces above can't — no `--team` flag needed, they resolve the team
+from *this session's own id* (`CLAUDE_CODE_SESSION_ID` matched against
+the team's `leadSessionId`; ADR-0015 brain layer, pull path). Run from a
+teammate session instead of the lead and they fail loudly (`not
+registered as any team's lead`) rather than guessing — that's correct,
+not a bug.
+
+- **`herdmates why <agent-name-or-id>`** — reach for this when one
+  teammate seems stuck and you want the reason, not just a status: full
+  waiting-reason detail (permission-prompt / blocked-on-dependency /
+  stalled tier / turn-complete / reason-less waiting), plus every raw
+  fact behind it (transcript staleness, unread inbox, owned-task
+  blocking). Non-lead teammates always show `agent_status: Unknown` and
+  "no transcript resolved" — a documented upstream gap (only the lead
+  resolves to a herdr session pre-shim), not this command failing.
+- **`herdmates deadlocks`** — reach for this when the team feels wedged
+  but every teammate looks idle: finds tasks stuck `in_progress` for
+  ≥10 minutes with unfinished work still blocked behind them —
+  suspected instances of the documented native bug where a task
+  finishes but its status file never flips to `completed`. Always
+  labeled a *suspicion*, never asserted as fact — verify before treating
+  it as a confirmed deadlock.
+- **`herdmates roster`** — reach for this for a quick "who's on this
+  team and what state are they in" before deciding who to check on;
+  each line carries a coarse 5-state label (`online` / `needs-you` /
+  `blocked` / `waiting` / `stale`) plus the underlying engine reason.
+
+All three print dense plain text meant for a model to read (no
+tables/color) and degrade honestly on missing data — never a wrong
+reason, never a guessed team.
 
 ## Hooks (already wired — do not re-register)
 

@@ -132,7 +132,12 @@ pub(crate) fn resolve_team_bucket(payload: &Value, teams: &[(String, Option<Stri
 /// same degrade-on-malformed-file policy `gather::gather_team` already
 /// uses. `None` (root unresolved) degrades to no teams. Cheap: a handful
 /// of small files, read once per hook invocation.
-fn discover_teams_at(teams_root: Option<&Path>) -> Vec<(String, Option<String>)> {
+///
+/// `pub(crate)` so `brain.rs` (issue #122, ADR-0015 brain layer) resolves
+/// a calling session's own team the exact same way this module resolves
+/// a hook payload's team — one team-directory enumeration, not a second
+/// copy.
+pub(crate) fn discover_teams_at(teams_root: Option<&Path>) -> Vec<(String, Option<String>)> {
     let Some(teams_root) = teams_root else {
         return Vec::new();
     };

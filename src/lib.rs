@@ -6,6 +6,7 @@
 //! source. `src/main.rs` re-imports everything below via `use herdmates::*;`
 //! so its existing subcommand dispatch is unchanged.
 
+pub mod brain;
 pub mod dateutil;
 pub mod doctor;
 pub mod gather;

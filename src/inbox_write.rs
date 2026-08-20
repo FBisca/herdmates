@@ -343,6 +343,7 @@ mod tests {
             status: "in_progress".to_owned(),
             owner: Some("alpha".to_owned()),
             seconds_since_modified: Some(5),
+            blocked_by: Vec::new(),
         }
     }
 

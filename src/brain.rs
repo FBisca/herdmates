@@ -1,0 +1,710 @@
+//! `herdmates why|deadlocks|roster` — v3.1 lead-facing skill verbs (issue
+//! #122, ADR-0015 "brain layer" §Decision point 2: "project-level skill
+//! verbs — `why <agent>`, `deadlocks`, `roster` — resolving the team
+//! from the lead's own session id"). This is the pull half of the brain
+//! layer; the push half (hook enrichment) is a separate, unbuilt spike
+//! (ADR-0015 §Rollout, v3.1+).
+//!
+//! ## Team resolution — never a `--team` flag, never a guess
+//!
+//! Every verb resolves its team from the CALLING process's own
+//! `CLAUDE_CODE_SESSION_ID` (live-verified present in every Claude Code
+//! subprocess, including a Bash-tool child, 2026-08-20 — `env | grep
+//! CLAUDE` inside a running session), matched against every team's
+//! `leadSessionId` the exact way [`team_hook::resolve_team_bucket`]
+//! matches a hook payload's `session_id` — same field, same semantics,
+//! reused enumeration ([`team_hook::discover_teams_at`]). A session that
+//! isn't registered as any team's lead (a teammate session, or no team
+//! at all) gets an honest "not a team lead" error, never a silent guess
+//! — same never-guess doctrine as [`gather::resolve_team`]'s ambiguity
+//! error and the signal engine's reason-less `Waiting` degrade
+//! (ADR-0013).
+//!
+//! ## Output shape
+//!
+//! Plain dense text, meant for a model to read (not a human TUI): no
+//! tables, no color, no box-drawing. Every fact traces back to
+//! `gather.rs`/`signal_engine.rs`/`teamfiles.rs` — this module computes
+//! nothing about team-file shape or waiting-reason precedence itself.
+//!
+//! ## 5-state vocabulary (amq-noc pattern, per issue #122)
+//!
+//! [`FiveState`] is a coarser display layer over the signal engine's
+//! four-class [`WaitingReason`] taxonomy, not a replacement for it —
+//! `why`'s output always shows both. See [`five_state`] for the mapping.
+
+use crate::gather::{self, GatherPaths, TaskDisplay, TeammateFacts};
+use crate::signal_engine::{self, AgentActivity, StalledThresholds, StalledTier, WaitingReason};
+use crate::team_hook;
+use std::time::SystemTime;
+use thiserror::Error;
+
+// ─── team resolution ────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum TeamResolveError {
+    #[error(
+        "CLAUDE_CODE_SESSION_ID is not set — brain verbs only work invoked from inside a running Claude Code session"
+    )]
+    NoSessionId,
+    #[error(
+        "session {0} is not registered as any team's lead — brain verbs resolve strictly from the calling session's own id (ADR-0015), never a guess; run this from the team lead, not a teammate"
+    )]
+    NotATeamLead(String),
+}
+
+/// Pure: match `session_id` against `teams`' `(team_directory_name,
+/// lead_session_id)` pairs (same shape [`team_hook::discover_teams_at`]
+/// produces). No I/O, no env — the impure shell below owns both.
+pub(crate) fn resolve_team_by_session(
+    session_id: Option<&str>,
+    teams: &[(String, Option<String>)],
+) -> Result<String, TeamResolveError> {
+    let session_id = session_id
+        .filter(|id| !id.is_empty())
+        .ok_or(TeamResolveError::NoSessionId)?;
+    teams
+        .iter()
+        .find(|(_, lead)| lead.as_deref() == Some(session_id))
+        .map(|(team, _)| team.clone())
+        .ok_or_else(|| TeamResolveError::NotATeamLead(session_id.to_owned()))
+}
+
+fn own_session_id() -> Option<String> {
+    std::env::var("CLAUDE_CODE_SESSION_ID")
+        .ok()
+        .filter(|id| !id.is_empty())
+}
+
+fn resolve_own_team(paths: &GatherPaths) -> Result<String, TeamResolveError> {
+    let teams = team_hook::discover_teams_at(Some(&paths.teams_root));
+    resolve_team_by_session(own_session_id().as_deref(), &teams)
+}
+
+// ─── 5-state vocabulary ─────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FiveState {
+    Online,
+    NeedsYou,
+    Blocked,
+    Waiting,
+    Stale,
+}
+
+impl FiveState {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Online => "online",
+            Self::NeedsYou => "needs-you",
+            Self::Blocked => "blocked",
+            Self::Waiting => "waiting",
+            Self::Stale => "stale",
+        }
+    }
+}
+
+/// Pure: coarsen the engine's four-class [`WaitingReason`] (plus the raw
+/// `agent_status`, needed to tell "actively working" apart from
+/// "finished a turn, nothing else to report") into amq-noc's five-state
+/// vocabulary. `PermissionPrompt` → `needs-you` (a human decision is the
+/// blocker); `BlockedOnDependency` → `blocked` (blocked on other work,
+/// not on a human); hard-tier `Stalled` → `stale`; soft-tier `Stalled`
+/// and the unbadged/reason-less classes → `waiting`, unless the raw
+/// status says the agent is actively `Working` right now, which reads
+/// as `online`. Total — every `WaitingReason` variant maps somewhere,
+/// no panic branch.
+pub(crate) fn five_state(status: AgentActivity, reason: WaitingReason) -> FiveState {
+    match reason {
+        WaitingReason::PermissionPrompt => FiveState::NeedsYou,
+        WaitingReason::BlockedOnDependency => FiveState::Blocked,
+        WaitingReason::Stalled {
+            tier: StalledTier::Stalled,
+            ..
+        } => FiveState::Stale,
+        WaitingReason::Stalled {
+            tier: StalledTier::Quiet,
+            ..
+        } => FiveState::Waiting,
+        WaitingReason::TurnComplete | WaitingReason::Waiting => {
+            if status == AgentActivity::Working {
+                FiveState::Online
+            } else {
+                FiveState::Waiting
+            }
+        }
+    }
+}
+
+// ─── why <agent> ────────────────────────────────────────────────────────────
+
+/// Pure: exact match on `name` or `agent_id` — the same two identifiers
+/// [`teamfiles::Member`] carries. No fuzzy matching: an honest miss beats
+/// a wrong pick (same doctrine as team resolution above).
+pub(crate) fn find_teammate<'a>(
+    members: &'a [TeammateFacts],
+    needle: &str,
+) -> Option<&'a TeammateFacts> {
+    members
+        .iter()
+        .find(|member| member.name == needle || member.agent_id == needle)
+}
+
+/// Pure: dense plain-text explanation of one teammate's waiting reason —
+/// the state-vocabulary label, the engine's precise class, and every raw
+/// fact that could have grounded it (never just the winning one — a
+/// model asking "why" wants the evidence, not only the verdict).
+pub(crate) fn render_why(
+    team: &str,
+    member: &TeammateFacts,
+    thresholds: &StalledThresholds,
+) -> String {
+    let reason = signal_engine::classify(&member.facts, thresholds);
+    let state = five_state(member.facts.agent_status, reason);
+    let mut out = format!(
+        "{} ({}) in team {} — {}: {}\n",
+        member.name,
+        if member.is_lead { "lead" } else { "member" },
+        team,
+        state.label(),
+        describe_reason(reason),
+    );
+    out.push_str(&format!(
+        "  agent_status: {:?}\n",
+        member.facts.agent_status
+    ));
+    out.push_str(&format!(
+        "  owned task blocked-by-incomplete: {}\n",
+        member.facts.owned_task_blocked_by_incomplete
+    ));
+    out.push_str(&format!(
+        "  transcript activity: {}\n",
+        match member.facts.seconds_since_transcript_activity {
+            Some(secs) => format!("{secs}s ago"),
+            None => "unknown (no transcript resolved — non-lead members have no herdr-resolvable session pre-shim, documented gap)".to_owned(),
+        }
+    ));
+    out.push_str(&format!(
+        "  unread inbox: {}\n",
+        match member.facts.seconds_since_unread_inbox {
+            Some(secs) => format!("oldest unread {secs}s ago"),
+            None => "none".to_owned(),
+        }
+    ));
+    out.push_str(&format!(
+        "  pane: {}",
+        member.pane_id.as_deref().unwrap_or("unresolved")
+    ));
+    out
+}
+
+fn describe_reason(reason: WaitingReason) -> String {
+    match reason {
+        WaitingReason::PermissionPrompt => "permission-prompt (pane-backed, herdr agent_status Blocked)".to_owned(),
+        WaitingReason::BlockedOnDependency => "blocked-on-dependency (owns a task with an incomplete blockedBy entry)".to_owned(),
+        WaitingReason::Stalled { tier: StalledTier::Quiet, secs } => format!("quiet {}m (soft stalled tier)", secs / 60),
+        WaitingReason::Stalled { tier: StalledTier::Stalled, secs } => format!("stalled {}m (hard stalled tier)", secs / 60),
+        WaitingReason::TurnComplete => "turn-complete (not waiting on anything the engine can name)".to_owned(),
+        WaitingReason::Waiting => "reason unresolved — no pane-backed status and no liveness signal grounds a class (never-wrong-reason degrade, ADR-0013)".to_owned(),
+    }
+}
+
+fn render_unknown_teammate(team: &str, needle: &str, members: &[TeammateFacts]) -> String {
+    let known: Vec<&str> = members.iter().map(|m| m.name.as_str()).collect();
+    format!(
+        "no teammate named or id-matching \"{needle}\" in team {team}\nknown members: {}",
+        if known.is_empty() {
+            "(none)".to_owned()
+        } else {
+            known.join(", ")
+        }
+    )
+}
+
+// ─── deadlocks ──────────────────────────────────────────────────────────────
+
+/// A task suspected — never asserted — of the documented native
+/// status-lag bug: work that's actually done but whose file never flips
+/// to `completed`, wedging every dependent behind it (ADR-0015 §Decision
+/// point 6, CONTEXT.md's "Status-lag deadlock"). This is a heuristic,
+/// not a fact the engine can ground: nothing in the task-file schema
+/// (#88) records semantic completion, only the `status` field itself —
+/// the same field this bug leaves stale. [`render_deadlocks`] always
+/// labels these as suspicions.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DeadlockSuspect {
+    pub task_id: String,
+    pub subject: Option<String>,
+    pub owner: Option<String>,
+    pub seconds_stale: u64,
+    pub blocked_dependents: Vec<String>,
+}
+
+/// Pure: an `in_progress` task whose file hasn't changed in at least
+/// `stalled_secs` (reuses the signal engine's own hard-stalled threshold
+/// — the same bar that grounds a teammate's `Stalled{Stalled}` class, so
+/// "this task's owner would also read as stale" is the honest bar for
+/// "this task looks abandoned too") AND has at least one other
+/// non-completed task naming it in `blockedBy` is a suspect. A stalled
+/// task with no dependent isn't reported — nothing downstream is wedged
+/// by it, so it isn't a *deadlock* suspect even if it's stale (that's
+/// what the per-teammate `Stalled` badge already covers).
+pub(crate) fn detect_status_lag(tasks: &[TaskDisplay], stalled_secs: u64) -> Vec<DeadlockSuspect> {
+    tasks
+        .iter()
+        .filter(|task| task.status == "in_progress")
+        .filter_map(|task| {
+            let seconds_stale = task
+                .seconds_since_modified
+                .filter(|secs| *secs >= stalled_secs)?;
+            let blocked_dependents: Vec<String> = tasks
+                .iter()
+                .filter(|other| {
+                    other.status != "completed" && other.blocked_by.iter().any(|id| id == &task.id)
+                })
+                .map(|other| other.id.clone())
+                .collect();
+            if blocked_dependents.is_empty() {
+                return None;
+            }
+            Some(DeadlockSuspect {
+                task_id: task.id.clone(),
+                subject: task.subject.clone(),
+                owner: task.owner.clone(),
+                seconds_stale,
+                blocked_dependents,
+            })
+        })
+        .collect()
+}
+
+/// Pure: dense plain-text rendering of [`detect_status_lag`]'s output.
+pub(crate) fn render_deadlocks(team: &str, suspects: &[DeadlockSuspect]) -> String {
+    if suspects.is_empty() {
+        return format!("no suspected status-lag deadlocks in team {team}");
+    }
+    let mut out = format!(
+        "{} suspected status-lag deadlock(s) in team {team}:\n",
+        suspects.len()
+    );
+    for suspect in suspects {
+        out.push_str(&format!(
+            "  task {} \"{}\" (owner: {}) — in_progress, unmodified {}m, blocking {} dependent(s): {}\n",
+            suspect.task_id,
+            suspect.subject.as_deref().unwrap_or("(no subject)"),
+            suspect.owner.as_deref().unwrap_or("(unowned)"),
+            suspect.seconds_stale / 60,
+            suspect.blocked_dependents.len(),
+            suspect.blocked_dependents.join(", "),
+        ));
+    }
+    out.push_str("  suspicion only: the task file may be stuck at in_progress after the work actually finished (documented native bug, ADR-0015); verify before assuming a true deadlock.");
+    out
+}
+
+// ─── roster ─────────────────────────────────────────────────────────────────
+
+/// Pure: dense plain-text roster — one line per member, state + engine
+/// reason + pane. Non-lead members always classify from `Unknown`
+/// `agent_status` (documented gap: `gather::gather_team`'s doc comment —
+/// only the lead resolves to a herdr session pre-shim) so their line is
+/// footnoted rather than silently presented as equally grounded.
+pub(crate) fn render_roster(
+    team: &str,
+    members: &[TeammateFacts],
+    thresholds: &StalledThresholds,
+) -> String {
+    if members.is_empty() {
+        return format!("team {team} has no members");
+    }
+    let mut out = format!("team {team} — {} member(s):\n", members.len());
+    let mut any_non_lead = false;
+    for member in members {
+        let reason = signal_engine::classify(&member.facts, thresholds);
+        let state = five_state(member.facts.agent_status, reason);
+        if !member.is_lead {
+            any_non_lead = true;
+        }
+        out.push_str(&format!(
+            "  {} [{}] {} — {}, pane {}\n",
+            member.name,
+            if member.is_lead { "lead" } else { "member" },
+            state.label(),
+            describe_reason(reason),
+            member.pane_id.as_deref().unwrap_or("unresolved"),
+        ));
+    }
+    if any_non_lead {
+        out.push_str("  note: non-lead members show no live agent_status (no herdr-resolvable session pre-shim, documented gather.rs gap) — their state/reason above is honestly degraded, not a real read.");
+    }
+    out
+}
+
+// ─── command wiring (impure shell) ─────────────────────────────────────────
+
+#[derive(Debug, Error)]
+pub enum BrainError {
+    #[error(transparent)]
+    TeamResolve(#[from] TeamResolveError),
+    #[error("could not resolve herdmates state paths (HOME unset?)")]
+    UnresolvedGatherPaths,
+    #[error("usage: herdmates why <agent-name-or-id>")]
+    MissingAgentArg,
+    #[error("{0}")]
+    UnknownTeammate(String),
+}
+
+fn gather_paths() -> Result<GatherPaths, BrainError> {
+    GatherPaths::from_env().ok_or(BrainError::UnresolvedGatherPaths)
+}
+
+/// `herdmates why <agent>` (issue #122, ADR-0015 brain layer pull path).
+pub fn why_command(args: &[String]) -> Result<(), BrainError> {
+    let agent = args.first().ok_or(BrainError::MissingAgentArg)?;
+    let paths = gather_paths()?;
+    let team = resolve_own_team(&paths)?;
+    let herdr = crate::herdr::HerdrClient::from_env();
+    let thresholds = StalledThresholds::default();
+    let members = gather::gather_team(&paths, &team, &herdr, SystemTime::now());
+    match find_teammate(&members, agent) {
+        Some(member) => {
+            println!("{}", render_why(&team, member, &thresholds));
+            Ok(())
+        }
+        None => Err(BrainError::UnknownTeammate(render_unknown_teammate(
+            &team, agent, &members,
+        ))),
+    }
+}
+
+/// `herdmates deadlocks` (issue #122, ADR-0015 §Decision point 6).
+pub fn deadlocks_command(_args: &[String]) -> Result<(), BrainError> {
+    let paths = gather_paths()?;
+    let team = resolve_own_team(&paths)?;
+    let tasks = gather::team_task_displays(&paths, &team, SystemTime::now());
+    let suspects = detect_status_lag(&tasks, StalledThresholds::default().stalled_secs);
+    println!("{}", render_deadlocks(&team, &suspects));
+    Ok(())
+}
+
+/// `herdmates roster` (issue #122, ADR-0015 brain layer pull path).
+pub fn roster_command(_args: &[String]) -> Result<(), BrainError> {
+    let paths = gather_paths()?;
+    let team = resolve_own_team(&paths)?;
+    let herdr = crate::herdr::HerdrClient::from_env();
+    let thresholds = StalledThresholds::default();
+    let members = gather::gather_team(&paths, &team, &herdr, SystemTime::now());
+    println!("{}", render_roster(&team, &members, &thresholds));
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::signal_engine::ObservedFacts;
+
+    // ── resolve_team_by_session ─────────────────────────────────────────────
+
+    #[test]
+    fn no_session_id_is_an_explicit_error() {
+        let teams = [("team-a".to_owned(), Some("s1".to_owned()))];
+        assert_eq!(
+            resolve_team_by_session(None, &teams),
+            Err(TeamResolveError::NoSessionId)
+        );
+    }
+
+    #[test]
+    fn empty_session_id_is_treated_as_absent() {
+        let teams = [("team-a".to_owned(), Some("s1".to_owned()))];
+        assert_eq!(
+            resolve_team_by_session(Some(""), &teams),
+            Err(TeamResolveError::NoSessionId)
+        );
+    }
+
+    #[test]
+    fn matching_lead_session_id_resolves_the_team() {
+        let teams = [
+            ("team-a".to_owned(), Some("s1".to_owned())),
+            ("team-b".to_owned(), Some("s2".to_owned())),
+        ];
+        assert_eq!(
+            resolve_team_by_session(Some("s2"), &teams),
+            Ok("team-b".to_owned())
+        );
+    }
+
+    #[test]
+    fn unmatched_session_id_is_not_a_team_lead_error() {
+        let teams = [("team-a".to_owned(), Some("s1".to_owned()))];
+        assert_eq!(
+            resolve_team_by_session(Some("teammate-session"), &teams),
+            Err(TeamResolveError::NotATeamLead(
+                "teammate-session".to_owned()
+            ))
+        );
+    }
+
+    #[test]
+    fn team_with_no_lead_session_id_never_matches() {
+        let teams = [("team-a".to_owned(), None)];
+        assert_eq!(
+            resolve_team_by_session(Some("s1"), &teams),
+            Err(TeamResolveError::NotATeamLead("s1".to_owned()))
+        );
+    }
+
+    // ── five_state ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn permission_prompt_is_needs_you() {
+        assert_eq!(
+            five_state(AgentActivity::Blocked, WaitingReason::PermissionPrompt),
+            FiveState::NeedsYou
+        );
+    }
+
+    #[test]
+    fn blocked_on_dependency_is_blocked() {
+        assert_eq!(
+            five_state(AgentActivity::Idle, WaitingReason::BlockedOnDependency),
+            FiveState::Blocked
+        );
+    }
+
+    #[test]
+    fn hard_stalled_tier_is_stale() {
+        assert_eq!(
+            five_state(
+                AgentActivity::Idle,
+                WaitingReason::Stalled {
+                    tier: StalledTier::Stalled,
+                    secs: 600
+                }
+            ),
+            FiveState::Stale
+        );
+    }
+
+    #[test]
+    fn soft_stalled_tier_is_waiting() {
+        assert_eq!(
+            five_state(
+                AgentActivity::Idle,
+                WaitingReason::Stalled {
+                    tier: StalledTier::Quiet,
+                    secs: 300
+                }
+            ),
+            FiveState::Waiting
+        );
+    }
+
+    #[test]
+    fn working_with_turn_complete_is_online() {
+        assert_eq!(
+            five_state(AgentActivity::Working, WaitingReason::TurnComplete),
+            FiveState::Online
+        );
+    }
+
+    #[test]
+    fn idle_with_turn_complete_is_waiting_not_online() {
+        assert_eq!(
+            five_state(AgentActivity::Idle, WaitingReason::TurnComplete),
+            FiveState::Waiting
+        );
+    }
+
+    #[test]
+    fn reason_less_waiting_never_reads_as_online() {
+        assert_eq!(
+            five_state(AgentActivity::Unknown, WaitingReason::Waiting),
+            FiveState::Waiting
+        );
+    }
+
+    // ── find_teammate ────────────────────────────────────────────────────────
+
+    fn member(name: &str, agent_id: &str, is_lead: bool) -> TeammateFacts {
+        TeammateFacts {
+            name: name.to_owned(),
+            agent_id: agent_id.to_owned(),
+            is_lead,
+            facts: ObservedFacts::default(),
+            pane_id: None,
+        }
+    }
+
+    #[test]
+    fn find_teammate_matches_by_name() {
+        let members = [member("alpha", "alpha@t", false)];
+        assert_eq!(
+            find_teammate(&members, "alpha").map(|m| &m.name),
+            Some(&"alpha".to_owned())
+        );
+    }
+
+    #[test]
+    fn find_teammate_matches_by_agent_id() {
+        let members = [member("alpha", "alpha@t", false)];
+        assert!(find_teammate(&members, "alpha@t").is_some());
+    }
+
+    #[test]
+    fn find_teammate_is_none_on_a_miss() {
+        let members = [member("alpha", "alpha@t", false)];
+        assert!(find_teammate(&members, "bob").is_none());
+    }
+
+    // ── detect_status_lag ────────────────────────────────────────────────────
+
+    fn task(
+        id: &str,
+        status: &str,
+        seconds_since_modified: Option<u64>,
+        blocked_by: &[&str],
+    ) -> TaskDisplay {
+        TaskDisplay {
+            id: id.to_owned(),
+            subject: Some(format!("task {id}")),
+            status: status.to_owned(),
+            owner: Some("someone".to_owned()),
+            seconds_since_modified,
+            blocked_by: blocked_by.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn stale_in_progress_task_with_blocked_dependent_is_a_suspect() {
+        let tasks = [
+            task("1", "in_progress", Some(700), &[]),
+            task("2", "pending", Some(10), &["1"]),
+        ];
+        let suspects = detect_status_lag(&tasks, 600);
+        assert_eq!(suspects.len(), 1);
+        assert_eq!(suspects[0].task_id, "1");
+        assert_eq!(suspects[0].blocked_dependents, vec!["2".to_owned()]);
+    }
+
+    #[test]
+    fn stale_task_with_no_dependent_is_not_a_suspect() {
+        let tasks = [task("1", "in_progress", Some(700), &[])];
+        assert!(detect_status_lag(&tasks, 600).is_empty());
+    }
+
+    #[test]
+    fn not_yet_stale_task_is_not_a_suspect_even_with_a_dependent() {
+        let tasks = [
+            task("1", "in_progress", Some(300), &[]),
+            task("2", "pending", Some(10), &["1"]),
+        ];
+        assert!(detect_status_lag(&tasks, 600).is_empty());
+    }
+
+    #[test]
+    fn pending_task_is_never_a_suspect_regardless_of_staleness() {
+        let tasks = [
+            task("1", "pending", Some(700), &[]),
+            task("2", "pending", Some(10), &["1"]),
+        ];
+        assert!(detect_status_lag(&tasks, 600).is_empty());
+    }
+
+    #[test]
+    fn already_completed_dependent_does_not_count_as_blocked() {
+        let tasks = [
+            task("1", "in_progress", Some(700), &[]),
+            task("2", "completed", Some(10), &["1"]),
+        ];
+        assert!(detect_status_lag(&tasks, 600).is_empty());
+    }
+
+    #[test]
+    fn task_with_no_mtime_fact_is_never_a_suspect() {
+        let tasks = [
+            task("1", "in_progress", None, &[]),
+            task("2", "pending", Some(10), &["1"]),
+        ];
+        assert!(detect_status_lag(&tasks, 600).is_empty());
+    }
+
+    #[test]
+    fn multiple_dependents_are_all_named() {
+        let tasks = [
+            task("1", "in_progress", Some(700), &[]),
+            task("2", "pending", Some(10), &["1"]),
+            task("3", "in_progress", Some(10), &["1"]),
+        ];
+        let suspects = detect_status_lag(&tasks, 600);
+        assert_eq!(suspects.len(), 1);
+        assert_eq!(suspects[0].blocked_dependents.len(), 2);
+    }
+
+    // ── render_* smoke tests (contract: contains the load-bearing facts) ────
+
+    #[test]
+    fn render_why_names_state_and_raw_facts() {
+        let facts = ObservedFacts {
+            agent_status: AgentActivity::Blocked,
+            ..Default::default()
+        };
+        let m = TeammateFacts {
+            name: "alpha".to_owned(),
+            agent_id: "alpha@t".to_owned(),
+            is_lead: false,
+            facts,
+            pane_id: Some("%3".to_owned()),
+        };
+        let rendered = render_why("team-x", &m, &StalledThresholds::default());
+        assert!(rendered.contains("alpha"));
+        assert!(rendered.contains("needs-you"));
+        assert!(rendered.contains("permission-prompt"));
+        assert!(rendered.contains("%3"));
+    }
+
+    #[test]
+    fn render_deadlocks_reports_none_honestly() {
+        assert_eq!(
+            render_deadlocks("team-x", &[]),
+            "no suspected status-lag deadlocks in team team-x"
+        );
+    }
+
+    #[test]
+    fn render_deadlocks_names_task_owner_and_dependents() {
+        let suspects = [DeadlockSuspect {
+            task_id: "3".to_owned(),
+            subject: Some("wire spool wake".to_owned()),
+            owner: Some("builder-98".to_owned()),
+            seconds_stale: 840,
+            blocked_dependents: vec!["4".to_owned()],
+        }];
+        let rendered = render_deadlocks("team-x", &suspects);
+        assert!(rendered.contains("wire spool wake"));
+        assert!(rendered.contains("builder-98"));
+        assert!(rendered.contains("14m"));
+        assert!(rendered.contains("suspicion only"));
+    }
+
+    #[test]
+    fn render_roster_footnotes_the_non_lead_status_gap() {
+        let members = [
+            member("team-lead", "lead@t", true),
+            member("alpha", "alpha@t", false),
+        ];
+        let rendered = render_roster("team-x", &members, &StalledThresholds::default());
+        assert!(rendered.contains("team-lead"));
+        assert!(rendered.contains("alpha"));
+        assert!(rendered.contains("documented gather.rs gap"));
+    }
+
+    #[test]
+    fn render_roster_empty_team_is_honest_not_blank() {
+        assert_eq!(
+            render_roster("team-x", &[], &StalledThresholds::default()),
+            "team team-x has no members"
+        );
+    }
+}
