@@ -1,0 +1,2 @@
+- [Hook payload session_id is not always the teammate](hook-payload-session-identity.md) — TeammateIdle sometimes fires with the lead's session_id/transcript_path; attribution traps
+- [Verification quirks](verification-quirks.md) — full gate ~286 tests +1 ignored live probe; live claims checkable against ~/.claude/projects transcripts and hook spool
