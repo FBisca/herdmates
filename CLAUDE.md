@@ -42,8 +42,10 @@ Code agent teams own spawn/messaging/lifecycle; we host + observe.
 
 ## Verified facts (don't re-derive; authority tags per ADR-0010)
 
-Herdr is **open source**: github.com/ogulcancelik/herdr; local clone
+Herdr is **open source**: github.com/herdrdev/herdr (org moved from
+ogulcancelik 2026-08; Apache-2.0 since v0.8.0); local clone
 `~/Projects/herdr-upstream` — **`git pull` before citing, it goes stale**.
+`herdr --skill` prints the official bundled agent skill (0.8.0+).
 Evidence hierarchy: live = behavior, source = attribution, preview =
 feature-detect (ADR-0010).
 
