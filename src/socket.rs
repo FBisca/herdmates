@@ -21,7 +21,11 @@ pub const MAX_RECONNECTS: usize = 3;
 pub(crate) const RECONNECT_BACKOFF: Duration = Duration::from_millis(10);
 const BACKEND_ENV: &str = "HERDR_TEAM_BACKEND";
 const TRACE_ENV: &str = "HERDR_TEAM_SOCKET_TRACE";
-const SCHEMA_BASELINE: &str = include_str!("../docs/herdr-api-schema.snapshot.json");
+// Frozen with the legacy socket backend (ADR-0011/ADR-0012): this layer is
+// pinned to the protocol-16 schema it was verified against. The live-herdr
+// snapshot at docs/herdr-api-schema.snapshot.json tracks the CURRENT herdr
+// (issue #108) and must not be re-pinned here.
+const SCHEMA_BASELINE: &str = include_str!("../docs/legacy/herdr-api-schema.protocol16.json");
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Handshake {
@@ -305,7 +309,12 @@ impl<C: HerdrApi> SocketClient<C> {
             _capabilities: _,
         } = serde_json::from_value(result).map_err(|e| invalid("ping", e))?;
         if protocol != SUPPORTED_PROTOCOL {
-            return Err(invalid_msg("ping", &format!("unsupported Herdr protocol: client supports {SUPPORTED_PROTOCOL}, server reported {protocol} (version {version})")));
+            return Err(invalid_msg(
+                "ping",
+                &format!(
+                    "unsupported Herdr protocol: client supports {SUPPORTED_PROTOCOL}, server reported {protocol} (version {version})"
+                ),
+            ));
         }
         Ok(Handshake { version, protocol })
     }
@@ -608,7 +617,9 @@ mod tests {
     use std::thread;
 
     fn snapshot(id: &str) -> String {
-        format!("{{\"id\":\"{id}\",\"result\":{{\"type\":\"session_snapshot\",\"snapshot\":{{\"version\":\"0.9.0\",\"protocol\":16,\"focused_workspace_id\":null,\"focused_tab_id\":null,\"focused_pane_id\":null,\"workspaces\":[],\"tabs\":[],\"panes\":[],\"layouts\":[],\"agents\":[]}}}}}}\n")
+        format!(
+            "{{\"id\":\"{id}\",\"result\":{{\"type\":\"session_snapshot\",\"snapshot\":{{\"version\":\"0.9.0\",\"protocol\":16,\"focused_workspace_id\":null,\"focused_tab_id\":null,\"focused_pane_id\":null,\"workspaces\":[],\"tabs\":[],\"panes\":[],\"layouts\":[],\"agents\":[]}}}}}}\n"
+        )
     }
 
     fn fake(responses: Vec<String>) -> (PathBuf, thread::JoinHandle<()>) {
@@ -736,7 +747,9 @@ mod tests {
             .as_nanos()
     }
     fn pong(id: &str, p: u32) -> String {
-        format!("{{\"id\":\"{id}\",\"result\":{{\"type\":\"pong\",\"version\":\"0.9.0\",\"protocol\":{p}}}}}\n")
+        format!(
+            "{{\"id\":\"{id}\",\"result\":{{\"type\":\"pong\",\"version\":\"0.9.0\",\"protocol\":{p}}}}}\n"
+        )
     }
     #[test]
     fn handshake_accepts_protocol_16() {
@@ -1000,7 +1013,10 @@ mod tests {
 
     #[test]
     fn board_bootstraps_snapshot_then_uses_typed_subscription_without_replacing_durable_truth() {
-        let event = concat!("{\"id\":\"herdr-agent-team:2\",\"result\":{\"type\":\"subscription_started\"}}\n", "{\"event\":\"pane.agent_status_changed\",\"data\":{\"pane_id\":\"p1\",\"workspace_id\":\"w1\",\"agent_status\":\"blocked\"}}\n");
+        let event = concat!(
+            "{\"id\":\"herdr-agent-team:2\",\"result\":{\"type\":\"subscription_started\"}}\n",
+            "{\"event\":\"pane.agent_status_changed\",\"data\":{\"pane_id\":\"p1\",\"workspace_id\":\"w1\",\"agent_status\":\"blocked\"}}\n"
+        );
         let (path, h, requests) = recording_fake(vec![
             pong("herdr-agent-team:0", 16),
             snapshot("herdr-agent-team:1"),
@@ -1102,7 +1118,7 @@ mod tests {
 
     #[test]
     fn immediate_subscription_error_uses_one_bounded_cli_fallback_sleep() {
-        let error="{\"id\":\"herdr-agent-team:1\",\"error\":{\"code\":\"unsupported\",\"message\":\"no subscription\"}}\n";
+        let error = "{\"id\":\"herdr-agent-team:1\",\"error\":{\"code\":\"unsupported\",\"message\":\"no subscription\"}}\n";
         let (path, h) = fake(vec![pong("herdr-agent-team:0", 16), error.into()]);
         let socket = SocketClient::connect_validated(path.clone(), FakeHerdr::default()).unwrap();
         let waits = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
@@ -1135,8 +1151,8 @@ mod tests {
 
     #[test]
     fn failed_resnapshot_never_allows_replacement_subscription() {
-        let malformed_snapshot="{\"id\":\"herdr-agent-team:3\",\"result\":{\"type\":\"session_snapshot\",\"snapshot\":{}}}\n";
-        let replacement="{\"id\":\"herdr-agent-team:4\",\"result\":{\"type\":\"subscription_started\"}}\n{\"event\":\"pane.agent_status_changed\",\"data\":{\"pane_id\":\"p1\",\"workspace_id\":\"w1\",\"agent_status\":\"blocked\"}}\n";
+        let malformed_snapshot = "{\"id\":\"herdr-agent-team:3\",\"result\":{\"type\":\"session_snapshot\",\"snapshot\":{}}}\n";
+        let replacement = "{\"id\":\"herdr-agent-team:4\",\"result\":{\"type\":\"subscription_started\"}}\n{\"event\":\"pane.agent_status_changed\",\"data\":{\"pane_id\":\"p1\",\"workspace_id\":\"w1\",\"agent_status\":\"blocked\"}}\n";
         let (path, h, requests) = recording_fake(vec![
             pong("herdr-agent-team:0", 16),
             snapshot("herdr-agent-team:1"),
@@ -1181,7 +1197,7 @@ mod tests {
 
     #[test]
     fn terminal_typed_event_error_never_reconnects() {
-        let malformed_event="{\"id\":\"herdr-agent-team:2\",\"result\":{\"type\":\"subscription_started\"}}\n{\"event\":\"pane.agent_status_changed\",\"data\":{\"pane_id\":\"p1\"}}\n";
+        let malformed_event = "{\"id\":\"herdr-agent-team:2\",\"result\":{\"type\":\"subscription_started\"}}\n{\"event\":\"pane.agent_status_changed\",\"data\":{\"pane_id\":\"p1\"}}\n";
         let (path, h, requests) = recording_fake(vec![
             pong("herdr-agent-team:0", 16),
             snapshot("herdr-agent-team:1"),
@@ -1287,7 +1303,7 @@ mod tests {
         h.join().unwrap();
         let _ = fs::remove_file(path);
 
-        let failure="{\"id\":\"herdr-agent-team:1\",\"error\":{\"code\":\"denied\",\"message\":\"SECRET prompt contents\"}}\n";
+        let failure = "{\"id\":\"herdr-agent-team:1\",\"error\":{\"code\":\"denied\",\"message\":\"SECRET prompt contents\"}}\n";
         let (path, h) = fake(vec![pong("herdr-agent-team:0", 16), failure.into()]);
         let mut client =
             SocketClient::connect_validated(path.clone(), FakeHerdr::default()).unwrap();
