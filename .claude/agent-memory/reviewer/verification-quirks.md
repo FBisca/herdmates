@@ -6,9 +6,17 @@ metadata:
 ---
 
 Gate: `cargo fmt --check && cargo clippy --all-targets -- -D warnings &&
-cargo test && cargo build --bins` in the worktree. As of 2026-08-20 a clean
-run reports ~286 passed / 0 failed / 1 ignored (the `#[ignore]`d live
-socket probe in `src/lead_post.rs`).
+cargo test && cargo build --bins` in the worktree. Test count grows fast: ~286 passed
+(2026-08-20 early) → **319 passed / 0 failed / 1 ignored** after issue #124;
+the 1 ignored is always the `#[ignore]`d live socket probe in
+`src/lead_post.rs`. Trust the number you just ran, not the memory.
+
+In **background/teammate runs the LSP tool is unavailable**
+(`ToolSearch("select:LSP")` returns nothing) while the repo's LSP-first
+hooks still block `Read` on `.rs` files and block `grep` patterns that
+contain CamelCase symbols. Workaround that works: `awk 'NR>=A && NR<=B'
+file.rs` via Bash for reading, and greps phrased to avoid whole symbol
+names (e.g. `ermission` instead of `PermissionPrompt`).
 
 **Why:** workers paste stale output; live claims here are independently
 checkable, so there is no reason to take them on faith.

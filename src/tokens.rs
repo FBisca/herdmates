@@ -5,6 +5,7 @@
 //! `$name` in `[ui.sidebar.agents] rows`; semantic state stays with herdr's
 //! own agent-status detection.
 
+use crate::brain::FiveState;
 use crate::teamfiles::Teammate;
 
 /// `--source` value the board pump reports under (ADR-0012 D1; distinct from
@@ -45,12 +46,38 @@ impl IntoIterator for TokenSet {
     }
 }
 
-/// Derive sidebar tokens from a parsed teammate.
+/// Sidebar rendering of one of amq-noc's five ambient states (issue #124,
+/// ADR-0015 ambient layer: "permission-prompt distinct from
+/// working/idle"). Reuses [`FiveState::label`] verbatim for the base
+/// word — single-source rule #90, sidebar and brain verbs (`why`,
+/// `roster`) must never disagree — and prepends an attention marker only
+/// for `NeedsYou` (a permission prompt: the one state a human must act
+/// on), so it reads as more urgent at a glance than working/idle even
+/// though herdr renders every token value as plain, uncolored text
+/// (display-only, never semantic — herdr 0.7.4 contract, ADR-0013).
+///
+/// Note: a lead whose status could not be read (herdr unreachable, pane
+/// gone) classifies to the reason-less `Waiting`, so the sidebar shows
+/// `waiting` for an unknown state — intentionally the same word `why`/
+/// `roster` use for that degrade (single-source rule #90), not a claim
+/// the lead is actually paused.
+pub(crate) fn state_value(state: FiveState) -> String {
+    if matches!(state, FiveState::NeedsYou) {
+        format!("!! {}", state.label())
+    } else {
+        state.label().to_owned()
+    }
+}
+
+/// Derive sidebar tokens from a parsed teammate and its priority-
+/// differentiated ambient state (issue #124). `state` is computed by the
+/// caller via `signal_engine::classify` + `brain::five_state` — this
+/// module only renders, it never re-derives the classification.
 ///
 /// Priority order (survives the budget cap first): `task`, `status`,
 /// `model`. A source field that is absent or empty produces no token for
 /// that name rather than an empty placeholder.
-pub fn teammate_tokens(teammate: &Teammate) -> TokenSet {
+pub(crate) fn teammate_tokens(teammate: &Teammate, state: FiveState) -> TokenSet {
     let mut candidates = Vec::new();
     if let Some(task) = non_empty(teammate.task.as_deref()) {
         candidates.push(Token {
@@ -60,7 +87,7 @@ pub fn teammate_tokens(teammate: &Teammate) -> TokenSet {
     }
     candidates.push(Token {
         name: "status".to_owned(),
-        value: if teammate.is_active { "active" } else { "idle" }.to_owned(),
+        value: state_value(state),
     });
     if let Some(model) = non_empty(teammate.model.as_deref()) {
         candidates.push(Token {
@@ -116,11 +143,10 @@ mod tests {
 
     #[test]
     fn full_teammate_produces_task_status_model_in_priority_order() {
-        let set = teammate_tokens(&teammate(
-            Some("write the haiku"),
-            true,
-            Some("claude-opus-4-8"),
-        ));
+        let set = teammate_tokens(
+            &teammate(Some("write the haiku"), true, Some("claude-opus-4-8")),
+            FiveState::Online,
+        );
 
         assert_eq!(
             set.tokens(),
@@ -131,7 +157,7 @@ mod tests {
                 },
                 Token {
                     name: "status".to_owned(),
-                    value: "active".to_owned()
+                    value: "online".to_owned()
                 },
                 Token {
                     name: "model".to_owned(),
@@ -143,34 +169,97 @@ mod tests {
 
     #[test]
     fn absent_task_and_model_are_skipped_not_emitted_empty() {
-        let set = teammate_tokens(&teammate(None, false, None));
+        let set = teammate_tokens(&teammate(None, false, None), FiveState::Waiting);
 
         assert_eq!(
             set.tokens(),
             [Token {
                 name: "status".to_owned(),
-                value: "idle".to_owned()
+                value: "waiting".to_owned()
             }]
         );
     }
 
     #[test]
     fn empty_string_task_is_treated_as_absent() {
-        let set = teammate_tokens(&teammate(Some(""), true, None));
+        let set = teammate_tokens(&teammate(Some(""), true, None), FiveState::Online);
 
         assert!(set.tokens().iter().all(|token| token.name != "task"));
     }
 
     #[test]
-    fn status_token_reflects_is_active_flag() {
+    fn status_token_reflects_passed_in_five_state() {
         assert_eq!(
-            teammate_tokens(&teammate(None, true, None)).tokens()[0].value,
-            "active"
+            teammate_tokens(&teammate(None, true, None), FiveState::Online).tokens()[0].value,
+            "online"
         );
         assert_eq!(
-            teammate_tokens(&teammate(None, false, None)).tokens()[0].value,
-            "idle"
+            teammate_tokens(&teammate(None, true, None), FiveState::NeedsYou).tokens()[0].value,
+            "!! needs-you"
         );
+    }
+
+    // ── state_value (issue #124, ADR-0015 ambient layer) ───────────────────
+
+    #[test]
+    fn five_states_render_distinct_values() {
+        let values: Vec<String> = [
+            FiveState::Online,
+            FiveState::NeedsYou,
+            FiveState::Blocked,
+            FiveState::Waiting,
+            FiveState::Stale,
+        ]
+        .into_iter()
+        .map(state_value)
+        .collect();
+        let unique: std::collections::BTreeSet<&String> = values.iter().collect();
+        assert_eq!(
+            unique.len(),
+            values.len(),
+            "every ambient state must render a distinct sidebar value: {values:?}"
+        );
+    }
+
+    #[test]
+    fn needs_you_alone_carries_the_attention_marker() {
+        assert!(
+            state_value(FiveState::NeedsYou).starts_with("!!"),
+            "permission-prompt must be the most visually prominent state"
+        );
+        for other in [
+            FiveState::Online,
+            FiveState::Blocked,
+            FiveState::Waiting,
+            FiveState::Stale,
+        ] {
+            assert!(
+                !state_value(other).starts_with("!!"),
+                "only needs-you may use the attention marker, got it on {other:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn state_values_reuse_brains_five_state_vocabulary_verbatim() {
+        assert_eq!(state_value(FiveState::Online), "online");
+        assert_eq!(state_value(FiveState::Blocked), "blocked");
+        assert_eq!(state_value(FiveState::Waiting), "waiting");
+        assert_eq!(state_value(FiveState::Stale), "stale");
+        assert_eq!(state_value(FiveState::NeedsYou), "!! needs-you");
+    }
+
+    #[test]
+    fn all_state_values_stay_within_the_token_value_budget() {
+        for state in [
+            FiveState::Online,
+            FiveState::NeedsYou,
+            FiveState::Blocked,
+            FiveState::Waiting,
+            FiveState::Stale,
+        ] {
+            assert!(state_value(state).chars().count() <= MAX_TOKEN_VALUE_CHARS);
+        }
     }
 
     #[test]

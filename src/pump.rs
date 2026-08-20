@@ -11,7 +11,10 @@
 //! are always skipped, never erroring the pass (ADR-0012's degrade
 //! policy).
 
+use crate::brain;
+use crate::gather::{self, GatherPaths};
 use crate::herdr::{AgentInfo, HerdrApi};
+use crate::signal_engine::{self, StalledThresholds};
 use crate::teamfiles::{self, InboxMessage, TeamConfig};
 use crate::tokens;
 use std::collections::BTreeMap;
@@ -26,9 +29,9 @@ pub enum PumpError {
 }
 
 pub fn pump_board_command(_args: &[String]) -> Result<(), PumpError> {
-    let teams_root = default_teams_root()?;
+    let paths = GatherPaths::from_env().ok_or(PumpError::UnresolvedTeamsRoot)?;
     let herdr = crate::herdr::HerdrClient::from_env();
-    pump_once(&teams_root, &herdr);
+    pump_once(&paths, &herdr);
     Ok(())
 }
 
@@ -55,17 +58,17 @@ const DEBOUNCE_MARKER_FILE: &str = "pump-board-last-run";
 /// failure (env, I/O, herdr) degrades to a skipped pass, same policy as
 /// [`pump_once`].
 pub fn maybe_pump<H: HerdrApi>(state_dir: &Path, herdr: &H) {
-    let Ok(teams_root) = default_teams_root() else {
+    let Some(paths) = GatherPaths::from_env() else {
         return;
     };
-    maybe_pump_at(state_dir, &teams_root, herdr, now_ms(), PUMP_DEBOUNCE_MS);
+    maybe_pump_at(state_dir, &paths, herdr, now_ms(), PUMP_DEBOUNCE_MS);
 }
 
 /// Testable core of [`maybe_pump`]. Returns whether a pass actually ran,
 /// so tests can assert the debounce boundary precisely.
 pub(crate) fn maybe_pump_at<H: HerdrApi>(
     state_dir: &Path,
-    teams_root: &Path,
+    paths: &GatherPaths,
     herdr: &H,
     now_ms: u64,
     debounce_ms: u64,
@@ -76,7 +79,7 @@ pub(crate) fn maybe_pump_at<H: HerdrApi>(
             return false;
         }
     }
-    pump_once(teams_root, herdr);
+    pump_once(paths, herdr);
     write_marker(&marker, now_ms);
     true
 }
@@ -102,21 +105,27 @@ fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
-/// One pump pass: discover every team under `teams_root`, resolve each
-/// team's lead to a herdr pane, and publish that lead's sidebar tokens.
-/// Never errors — any per-team or per-teammate failure (missing/malformed
-/// file, unresolvable pane, herdr call failure) is skipped silently, per
-/// ADR-0012's degrade policy.
-pub fn pump_once<H: HerdrApi>(teams_root: &Path, herdr: &H) {
-    let team_dirs = discover_team_dirs(teams_root);
+/// One pump pass: discover every team under `paths.teams_root`, resolve
+/// each team's lead to a herdr pane, and publish that lead's
+/// priority-differentiated sidebar tokens (issue #124, ADR-0015 ambient
+/// layer). Never errors — any per-team or per-teammate failure
+/// (missing/malformed file, unresolvable pane, herdr call failure) is
+/// skipped silently, per ADR-0012's degrade policy.
+pub fn pump_once<H: HerdrApi>(paths: &GatherPaths, herdr: &H) {
+    let team_dirs = discover_team_dirs(&paths.teams_root);
     if team_dirs.is_empty() {
         return;
     }
     let Ok(agents) = herdr.agent_list() else {
         return;
     };
+    let now = SystemTime::now();
+    let thresholds = StalledThresholds::default();
 
     for team_dir in team_dirs {
+        let Some(team_name) = team_dir.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
         let Ok(config) = teamfiles::read_team_config(&team_dir.join("config.json")) else {
             continue;
         };
@@ -129,7 +138,21 @@ pub fn pump_once<H: HerdrApi>(teams_root: &Path, herdr: &H) {
             continue;
         };
 
-        let token_set = tokens::teammate_tokens(lead);
+        // Priority-differentiated ambient state (issue #124): reuse
+        // brain::five_state's exact WaitingReason -> FiveState mapping
+        // (#122) rather than re-deriving it here (single-source rule
+        // #90). `gather_team` re-reads this team's config to gather full
+        // `ObservedFacts` (task-blocked, transcript/inbox liveness) —
+        // a second, small read, not worth threading the parsed config
+        // through just to save it.
+        let facts = gather::gather_team(paths, team_name, herdr, now);
+        let Some(lead_facts) = facts.iter().find(|member| member.is_lead) else {
+            continue;
+        };
+        let reason = signal_engine::classify(&lead_facts.facts, &thresholds);
+        let state = brain::five_state(lead_facts.facts.agent_status, reason);
+
+        let token_set = tokens::teammate_tokens(lead, state);
         let pairs = token_set
             .into_iter()
             .map(|token| (token.name, token.value))
@@ -187,6 +210,7 @@ pub fn resolve_lead_pane(config: &TeamConfig, agents: &[AgentInfo]) -> Option<St
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::brain::FiveState;
     use crate::herdr::{test_support::FakeHerdr, AgentSession};
     use crate::teamfiles::{Member, Teammate};
     use std::fs;
@@ -215,6 +239,17 @@ mod tests {
     impl Drop for TempDir {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// `tasks_root`/`projects_root` point at siblings that are never
+    /// written in these pump-focused tests — `gather::gather_team`
+    /// degrades a missing dir to empty facts, never an error.
+    fn paths_for(teams_root: &Path) -> GatherPaths {
+        GatherPaths {
+            teams_root: teams_root.to_path_buf(),
+            tasks_root: teams_root.join("__tasks_unused"),
+            projects_root: teams_root.join("__projects_unused"),
         }
     }
 
@@ -374,16 +409,62 @@ mod tests {
         let fake = FakeHerdr::default();
         *fake.agents.borrow_mut() = vec![agent_with_session("w1:pLead", "resolvable-session")];
 
-        pump_once(temp.path(), &fake);
+        pump_once(&paths_for(temp.path()), &fake);
 
         let calls = fake.calls();
         assert_eq!(
             calls,
             [
                 "agent_list",
-                "pane_report_tokens:w1:pLead:herdmates-board:task=Coordinate the team,status=idle"
-            ]
+                "agent_list",
+                "pane_report_tokens:w1:pLead:herdmates-board:task=Coordinate the team,status=online"
+            ],
+            "two agent_list calls: pump_once's own lead-pane resolution, then \
+             gather::gather_team's inside the state-classification path"
         );
+    }
+
+    // #124 review fix: pump-level guards for the two states the ticket is
+    // about — a hard-coded FiveState in pump_once would pass the wiring
+    // test above (working → online) but fail these.
+
+    #[test]
+    fn pump_once_renders_a_blocked_lead_as_needs_you_with_the_marker() {
+        let temp = TempDir::new();
+        write_team(temp.path(), "session-blocked", "blocked-session", "");
+        let fake = FakeHerdr::default();
+        let mut agent = agent_with_session("w1:pLead", "blocked-session");
+        // herdr "blocked" = permission prompt (signal_engine::classify).
+        agent.status = Some("blocked".to_owned());
+        *fake.agents.borrow_mut() = vec![agent];
+
+        pump_once(&paths_for(temp.path()), &fake);
+
+        let report = fake
+            .calls()
+            .into_iter()
+            .find(|call| call.starts_with("pane_report_tokens"))
+            .expect("a report call");
+        assert!(report.ends_with("status=!! needs-you"), "{report}");
+    }
+
+    #[test]
+    fn pump_once_renders_a_statusless_lead_as_waiting_never_online() {
+        let temp = TempDir::new();
+        write_team(temp.path(), "session-nostatus", "nostatus-session", "");
+        let fake = FakeHerdr::default();
+        let mut agent = agent_with_session("w1:pLead", "nostatus-session");
+        agent.status = None;
+        *fake.agents.borrow_mut() = vec![agent];
+
+        pump_once(&paths_for(temp.path()), &fake);
+
+        let report = fake
+            .calls()
+            .into_iter()
+            .find(|call| call.starts_with("pane_report_tokens"))
+            .expect("a report call");
+        assert!(report.ends_with("status=waiting"), "{report}");
     }
 
     #[test]
@@ -395,7 +476,7 @@ mod tests {
         // session matches this team's lead — never an error, just a skip.
         *fake.agents.borrow_mut() = vec![agent_with_session("w1:p1", "unrelated-session")];
 
-        pump_once(temp.path(), &fake);
+        pump_once(&paths_for(temp.path()), &fake);
 
         assert_eq!(
             fake.calls(),
@@ -409,7 +490,7 @@ mod tests {
         let temp = TempDir::new();
         let fake = FakeHerdr::default();
 
-        pump_once(temp.path(), &fake);
+        pump_once(&paths_for(temp.path()), &fake);
 
         assert!(
             fake.calls().is_empty(),
@@ -436,7 +517,7 @@ mod tests {
         let teammates = teamfiles::build_teammates(&config, &BTreeMap::new());
         let lead: &Teammate = teammates.iter().find(|t| t.is_lead).unwrap();
 
-        let token_set = tokens::teammate_tokens(lead);
+        let token_set = tokens::teammate_tokens(lead, FiveState::Online);
 
         assert_eq!(
             token_set
@@ -456,7 +537,13 @@ mod tests {
         let teams_dir = TempDir::new();
         let fake = FakeHerdr::default();
 
-        let ran = maybe_pump_at(state_dir.path(), teams_dir.path(), &fake, 1_000, 2_000);
+        let ran = maybe_pump_at(
+            state_dir.path(),
+            &paths_for(teams_dir.path()),
+            &fake,
+            1_000,
+            2_000,
+        );
 
         assert!(ran, "no prior marker means the pass must run");
         assert_eq!(
@@ -470,15 +557,10 @@ mod tests {
         let state_dir = TempDir::new();
         let teams_dir = TempDir::new();
         let fake = FakeHerdr::default();
-        assert!(maybe_pump_at(
-            state_dir.path(),
-            teams_dir.path(),
-            &fake,
-            1_000,
-            2_000
-        ));
+        let paths = paths_for(teams_dir.path());
+        assert!(maybe_pump_at(state_dir.path(), &paths, &fake, 1_000, 2_000));
 
-        let ran_again = maybe_pump_at(state_dir.path(), teams_dir.path(), &fake, 2_500, 2_000);
+        let ran_again = maybe_pump_at(state_dir.path(), &paths, &fake, 2_500, 2_000);
 
         assert!(
             !ran_again,
@@ -496,15 +578,10 @@ mod tests {
         let state_dir = TempDir::new();
         let teams_dir = TempDir::new();
         let fake = FakeHerdr::default();
-        assert!(maybe_pump_at(
-            state_dir.path(),
-            teams_dir.path(),
-            &fake,
-            1_000,
-            2_000
-        ));
+        let paths = paths_for(teams_dir.path());
+        assert!(maybe_pump_at(state_dir.path(), &paths, &fake, 1_000, 2_000));
 
-        let ran_again = maybe_pump_at(state_dir.path(), teams_dir.path(), &fake, 3_100, 2_000);
+        let ran_again = maybe_pump_at(state_dir.path(), &paths, &fake, 3_100, 2_000);
 
         assert!(
             ran_again,
@@ -523,16 +600,11 @@ mod tests {
         write_team(teams_dir.path(), "session-a", "session-a-id", "");
         let fake = FakeHerdr::default();
         *fake.agents.borrow_mut() = vec![agent_with_session("w1:p1", "session-a-id")];
-        assert!(maybe_pump_at(
-            state_dir.path(),
-            teams_dir.path(),
-            &fake,
-            1_000,
-            2_000
-        ));
+        let paths = paths_for(teams_dir.path());
+        assert!(maybe_pump_at(state_dir.path(), &paths, &fake, 1_000, 2_000));
         let calls_after_first_pass = fake.calls().len();
 
-        maybe_pump_at(state_dir.path(), teams_dir.path(), &fake, 1_500, 2_000);
+        maybe_pump_at(state_dir.path(), &paths, &fake, 1_500, 2_000);
 
         assert_eq!(
             fake.calls().len(),

@@ -93,7 +93,10 @@ pub(crate) enum FiveState {
 }
 
 impl FiveState {
-    fn label(self) -> &'static str {
+    /// `pub(crate)`, not private: issue #124 (ADR-0015 ambient layer)
+    /// reuses this exact vocabulary for sidebar tokens — single-source
+    /// rule #90, sidebar and brain verbs must never disagree.
+    pub(crate) fn label(self) -> &'static str {
         match self {
             Self::Online => "online",
             Self::NeedsYou => "needs-you",
