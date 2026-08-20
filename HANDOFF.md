@@ -24,9 +24,18 @@ Updated 2026-08-20 (post-v2.3.0, wave complete + human tickets resolved).
   tests); live→legacy calls fail to compile without the feature
   (mutation-verified). Delete criterion: legacy verbs unused for a
   release or two of dogfooding. Committed local, unpushed.
-- **NEXT: #117 + #118 (agent-ready), then keep dogfooding.** Unpushed
-  commits on main (E2E evidence + ADR-0014 gate) batch into the next
-  release on Caio's word.
+- **NEXT (agreed with Caio 2026-08-20): fix #117 + #118, then release
+  v2.3.1** batching the unpushed commits (E2E evidence, ADR-0014 gate,
+  cross-session research). Behavior change → manifest bump + reinstall.
+- Machine config now shim-by-default: Caio's `~/.zshrc` wraps `claude`
+  → `herdmates teammux-launch` when `$HERDR_ENV` is set, and
+  `teammateMode` is `tmux` in `~/.claude/settings.json` — every claude
+  session started inside herdr drives the shim, so teammates land as
+  panes without remembering the launch command. Caveat: outside herdr,
+  tmux mode is forced too (wrapper falls through to plain claude).
+- Cross-session messaging (CC 2.1.224) absorbed: no external injection
+  API, nudge stays an inbox write, board can't see socket traffic —
+  see `docs/research/cross-session-messaging-2026-08-20.md`.
 
 ## How to resume
 
