@@ -15,10 +15,14 @@ Updated 2026-08-20 (post-v2.2.0, wave "audit + skill recon" in progress).
 - **Dogfood-in-anger RESUMED by decision 2026-08-20** — it had silently
   stalled (plugin uninstalled, zero commits 2026-07-18…08-19, #104
   untriaged). Reinstall + shim E2E re-run is #105 (human-present).
-- **Working tree ahead of last release**: CI gate (#107, committed),
-  skills rewrite (new `skills/herdmates/`, god + codex-prompting
-  tombstoned — #110), further wave tickets landing as commits. **Batch
-  release (v2.3.0) at wave end, only on Caio's word.**
+- **Wave progress (2026-08-20 EOD)**: CLOSED #104 #106 #107 #108 #109 #110
+  #112 #113 #114 #115 — all committed local, 475 tests green, gate clean.
+  #106 doctor (static) also CLOSED — 496 tests green.
+  **NEXT: batch v2.3.0 release on Caio's word (bump Cargo.toml +
+  herdr-plugin.toml, tag, push; manifest changed → relink after install).** Open human tickets: #105 (shim E2E +
+  reinstall, human-present), #111 (upstream asks — drafts in issue
+  comments), #116 (legacy disposition — recommendation in issue
+  comments).
 - Upstream drift to absorb: Claude Code 2.1.237 (shim proven on 2.1.211;
   three team-relevant changes since — see #105), herdr 0.8.2 at
   `herdrdev/herdr` (org moved, Apache-2.0, `herdr --skill`,
