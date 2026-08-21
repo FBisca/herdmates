@@ -127,6 +127,32 @@ Research external repos/libs/docs via **ctx7** (find-docs skill) first,
 upstream source second, live behavior decisive. Never assume — verify
 inherited claims before building on them. See `docs/agents/research.md`.
 
+## Known Pitfalls
+
+Format: symptom → root cause → fix → prevention. Scribe-maintained; full
+wave detail stays in `docs/learnings/` — entries here are the recurring
+ones. Fix docs in the SAME task as the code they describe (doc-code sync);
+reviewer treats doc-code drift as HIGH severity.
+
+- **Manifest advertises deleted subcommands** → manifest `commands` and
+  `main.rs` match arms are a producer/consumer seam nobody cross-checked
+  (#121) → re-sync manifest → `scripts/check-subcommand-seams.sh` in the
+  gate; reviewers cross-compare both sides, never existence-check one.
+- **Worktree appears as a gitlink in a commit** → `git add -A` staged an
+  agent worktree dir as mode 160000 → remove from index → gitignore agent
+  worktree dirs; check for 160000 entries before committing.
+- **Check passes but guards nothing** → the code it checked was deleted;
+  the check still exits 0 → re-point or delete the check → before citing
+  any check as evidence, name what it would catch and mutation-prove it.
+
+## Style Decisions
+
+- Pure logic (file-contract parsing, token formatting, verb-mapping tables)
+  lives apart from process-spawning code — testability first.
+- Stubs cite their spec/ADR section; the citation survives implementation.
+- Docs are pointer-only at the top level: CLAUDE.md holds triggers +
+  pointers, never duplicated structure from ADRs/CONTEXT.md.
+
 ## Conventions
 
 - Rust, `cargo fmt` + `clippy -D warnings` clean before commit.
