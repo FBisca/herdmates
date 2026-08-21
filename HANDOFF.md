@@ -17,12 +17,17 @@ done).
   in docs/research/hook-socket-enrichment-2026-08-20.md §4–5), #124 sidebar
   5-state priority tokens ("!! needs-you" marked; reuses brain::five_state,
   single-source rule #90). Release = Caio's word + bump to 3.1.0 + tag.
-- **Open tickets**: #125 (dead auto-pump `maybe_pump` + dead metadata.rs +
-  lead-only state rendering — delete-vs-rewire), #126 (Stop-hook/asyncRewake
-  push spike — external→lead injection prior art from agent-teams-mcp; verify
-  asyncRewake against official docs first), #127 (boundary-crossing QA pairs
-  for our seams + runnable golden-rules checks; the #121 stale-manifest bug
-  was this class).
+- **2026-08-21 wave (local main, still unpushed)**: #125 CLOSED — auto-pump
+  rewired into the hook path as `pump::auto_pump` (in-process debounce +
+  detached `pump-board` child; hook never blocks). #126 CLOSED — asyncRewake
+  spike CONFIRMED live (0.49s wake; delivery is an isMeta user turn, NOT a
+  system reminder → injection surface; full findings on the issue). #127
+  CLOSED — `docs/agents/boundary-pairs.md` + `check-boundary-seams.sh`
+  (ADR-0004, brace-depth cfg(test) skip, mutation-proven) + Side D
+  (self-spawn literals) in `check-subcommand-seams.sh`; both in CI. Two opus
+  review rounds applied (commits 9b582a0, 4792349).
+- **Open tickets**: #128/#129/#130 (needs-triage), #131 (TeammateIdle
+  enrichment debounce — teardown idle-storms flood the lead, observed live).
 - **Upstream**: posted the socket-seam findings on claude-code#88332
   (issuecomment-5362847742) — fact-checked against the evidence doc.
 - **Team/process** (user-level, affects work here): agent roster in
