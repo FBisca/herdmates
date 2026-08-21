@@ -411,7 +411,15 @@ fn hook_command_from(
         }
     }
 
-    push_enrichment(paths, socket, &bucket, event_name, &envelope.payload, now);
+    push_enrichment(
+        paths,
+        socket,
+        spool_base,
+        &bucket,
+        event_name,
+        &envelope.payload,
+        now,
+    );
 
     ExitCode::from(exit_status(decide_gate(
         load_gate_config().as_ref(),
@@ -431,9 +439,19 @@ fn hook_command_from(
 /// refused, timed-out, or held post → one stderr line and exit 0. The
 /// spool write above already happened either way, so an unreachable lead
 /// never costs us the observation.
+/// Debounce window for identical enrichment posts (issue #131): a
+/// tearing-down teammate fires TeammateIdle in ~1/s bursts (observed
+/// live 2026-08-21), and relaying each one floods — or, worse,
+/// self-feeds — the lead. One post per (team, event, teammate) per
+/// window; the spool append above stays unfiltered (black-box recorder
+/// framing).
+const ENRICH_DEBOUNCE_MS: u64 = 30_000;
+
+#[allow(clippy::too_many_arguments)]
 fn push_enrichment(
     paths: Option<&crate::gather::GatherPaths>,
     socket: Option<&crate::lead_post::SocketTarget>,
+    spool_base: Option<&Path>,
     team: &str,
     event_name: &str,
     payload: &Value,
@@ -446,6 +464,33 @@ fn push_enrichment(
     else {
         return;
     };
+    // Debounce only once there is something to post, so a suppressed
+    // no-text event never burns the window for a real one.
+    if let Some(base) = spool_base {
+        let teammate = payload
+            .get("teammate_name")
+            .and_then(Value::as_str)
+            .filter(|name| !name.is_empty())
+            .unwrap_or("unknown");
+        let key: String = format!("{team}--{event_name}--{teammate}")
+            .chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                    c
+                } else {
+                    '_'
+                }
+            })
+            .collect();
+        let marker = base.join("herdmates/enrich-debounce").join(key);
+        let now_ms = now
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis().min(u128::from(u64::MAX)) as u64)
+            .unwrap_or(0);
+        if !crate::pump::debounce_admit_marker(&marker, now_ms, ENRICH_DEBOUNCE_MS) {
+            return;
+        }
+    }
     if let Err(error) = crate::lead_post::post(socket, &text) {
         eprintln!("herdmates hook: enrichment post failed for {event_name}: {error}");
     }
@@ -805,6 +850,63 @@ mod tests {
             "{content}"
         );
         assert!(content.contains("tasks: 2 open, 1 blocked"), "{content}");
+    }
+
+    /// Issue #131 regression: a TeammateIdle storm (same team, event and
+    /// teammate, observed ~1/s live during teardown) must reach the lead
+    /// once per debounce window, not once per event. The spool keeps
+    /// every line; only the post is debounced.
+    #[test]
+    fn a_repeated_event_within_the_debounce_window_posts_once() {
+        use std::io::Read as _;
+
+        let dir = TempDir::new();
+        let paths = crate::gather::GatherPaths {
+            teams_root: dir.path().join("teams"),
+            tasks_root: dir.path().join("tasks"),
+            projects_root: dir.path().join("projects"),
+        };
+        let socket_path = dir.path().join("inbox.sock");
+        let listener = std::os::unix::net::UnixListener::bind(&socket_path).unwrap();
+
+        let payload = json!({
+            "hook_event_name": "TeammateIdle",
+            "teammate_name": "alpha",
+            "team_name": "wave3",
+        });
+        let socket = crate::lead_post::SocketTarget {
+            path: socket_path,
+            token: Some("tok".to_owned()),
+        };
+        for _ in 0..2 {
+            let exit_code = hook_command_from(
+                "TeammateIdle",
+                std::io::Cursor::new(payload.to_string().into_bytes()),
+                Some(&paths),
+                Some(&dir.path().join("state")),
+                Some(&socket),
+                SystemTime::UNIX_EPOCH,
+            );
+            assert_eq!(format!("{exit_code:?}"), format!("{:?}", ExitCode::SUCCESS));
+        }
+
+        // Exactly one queued connection: the first event's post.
+        let (mut connection, _) = listener.accept().unwrap();
+        let mut received = String::new();
+        connection.read_to_string(&mut received).unwrap();
+        assert!(received.contains("TeammateIdle alpha"), "{received}");
+
+        listener.set_nonblocking(true).unwrap();
+        match listener.accept() {
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+            other => panic!("second event must not post, got {other:?}"),
+        }
+
+        // Both events still hit the spool (recorder stays unfiltered).
+        let spool =
+            std::fs::read_to_string(dir.path().join("state/herdmates/hook-spool/wave3.jsonl"))
+                .unwrap();
+        assert_eq!(spool.lines().count(), 2, "{spool}");
     }
 
     /// The host must never notice an unreachable lead: the spool line is

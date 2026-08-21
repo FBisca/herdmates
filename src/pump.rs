@@ -84,13 +84,19 @@ pub fn auto_pump(state_dir: &Path) {
 /// marker on admit. Shared by [`auto_pump`] (detached spawn) and
 /// [`maybe_pump_at`] (in-process, the tested core).
 pub(crate) fn debounce_admit(state_dir: &Path, now_ms: u64, debounce_ms: u64) -> bool {
-    let marker = state_dir.join(DEBOUNCE_MARKER_FILE);
-    if let Some(last_ms) = read_marker(&marker) {
+    debounce_admit_marker(&state_dir.join(DEBOUNCE_MARKER_FILE), now_ms, debounce_ms)
+}
+
+/// Core of [`debounce_admit`], on an explicit marker path so other
+/// debounced paths (issue #131: the enrichment post keys per
+/// team/event/teammate) can reuse it without inheriting the board marker.
+pub(crate) fn debounce_admit_marker(marker: &Path, now_ms: u64, debounce_ms: u64) -> bool {
+    if let Some(last_ms) = read_marker(marker) {
         if now_ms.saturating_sub(last_ms) < debounce_ms {
             return false;
         }
     }
-    write_marker(&marker, now_ms);
+    write_marker(marker, now_ms);
     true
 }
 
