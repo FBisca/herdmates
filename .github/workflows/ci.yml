@@ -21,3 +21,6 @@ jobs:
       # Issue #127: cross-compare the subcommand seams (dispatch arms vs help
       # text vs plugin manifest). Both drifted for real during the v3.0.0 wave.
       - run: bash scripts/check-subcommand-seams.sh
+      # Issue #127: boundary-crossing seams (docs/agents/boundary-pairs.md) —
+      # currently just the ADR-0004 cd-in-prompt-text anti-pattern grep.
+      - run: bash scripts/check-boundary-seams.sh
