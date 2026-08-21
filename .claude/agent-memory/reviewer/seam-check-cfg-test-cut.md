@@ -1,6 +1,6 @@
 ---
 name: seam-check-cfg-test-cut
-description: check-boundary-seams.sh's cfg(test) skip — fixed 2026-08-21 by brace-depth tracking; residual failure mode is a braceless #[cfg(test)] item, which silently blinds the rest of that file
+description: check-boundary-seams.sh's cfg(test) skip — brace-depth (9b582a0) + semicolon-clear (4792349); residual is the ONE-LINE #[cfg(test)] fn, which over-skips the next few production lines
 metadata:
   type: project
 ---
@@ -19,13 +19,19 @@ as `src/pump.rs:50`; inside teammux.rs's test mod (line 700) → exit 0
 (fixtures still exempt). All 22 computed skip ranges in the tree land
 exactly on the true block end — no string/comment brace miscount today.
 
-**Residual, mutation-proven 2026-08-21.** The skip only ends once a brace
-has opened and closed. A *braceless* `#[cfg(test)]` item —
-`#[cfg(test)] use x;`, `#[cfg(test)] const …;`, or a one-line
-`#[cfg(test)] fn f() { … }` — never sets `started`, so `skip` stays 1 to
-EOF and the rest of that file is silently unscanned. Proof: inserting
-`#[cfg(test)] use std::fmt as _;` at pump.rs:40 plus a real violation at
-pump.rs:50 → check exits **0**. No such item exists in the tree today.
+**Braceless case fixed in 4792349 (2026-08-21)** —
+`if (!started && /;[[:space:]]*$/) skip = 0` clears the latch at the
+item's semicolon. A/B mutation-proven 2026-08-21: `#[cfg(test)] use
+std::fmt as _;` + a `cd … &&` violation two lines later → pre-fix script
+exits **0**, post-fix exits **1** reporting the real line.
+
+**Residual, mutation-proven 2026-08-21.** A *one-line* item
+(`#[cfg(test)] fn f() { let _ = 1; }`) still blinds: the attribute rule
+`next`s before braces are counted, so `started` stays 0 and the skip runs
+on until the next line ending in `;`. Proof: that one-liner plus a
+violation on the following line → exit **0**. Bounded (not to EOF) but
+non-zero. No one-line `#[cfg(test)]` item exists in the tree today
+(`grep -c '#\[cfg(test)\] ' src/*.rs` → only a comment in team_hook.rs).
 
 **How to apply:** when reviewing any `src/*.rs`-sweeping shell check
 here, mutation-prove it in the file it most needs to cover, and probe the

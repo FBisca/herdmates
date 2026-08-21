@@ -427,6 +427,16 @@ fn hook_command_from(
     )))
 }
 
+/// Debounce window for identical enrichment posts (issue #131): a
+/// tearing-down teammate fires TeammateIdle in ~1/s bursts (observed
+/// live 2026-08-21), and relaying each one floods — or, worse,
+/// self-feeds — the lead. One post per (team, event, teammate) per
+/// window; the spool append stays unfiltered (black-box recorder
+/// framing). The gather/task-read cost in `enrichment_for_event` is
+/// knowingly NOT bounded by this window — only the post is (bounded
+/// small-file I/O per event, never a subprocess).
+const ENRICH_DEBOUNCE_MS: u64 = 30_000;
+
 /// Push half of the brain layer (issue #123, ADR-0015 §"brain layer"
 /// item 1): compute the signal-engine facts behind this event and post
 /// them into the hosting lead's own inbox socket, so the lead's model
@@ -439,14 +449,6 @@ fn hook_command_from(
 /// refused, timed-out, or held post → one stderr line and exit 0. The
 /// spool write above already happened either way, so an unreachable lead
 /// never costs us the observation.
-/// Debounce window for identical enrichment posts (issue #131): a
-/// tearing-down teammate fires TeammateIdle in ~1/s bursts (observed
-/// live 2026-08-21), and relaying each one floods — or, worse,
-/// self-feeds — the lead. One post per (team, event, teammate) per
-/// window; the spool append above stays unfiltered (black-box recorder
-/// framing).
-const ENRICH_DEBOUNCE_MS: u64 = 30_000;
-
 #[allow(clippy::too_many_arguments)]
 fn push_enrichment(
     paths: Option<&crate::gather::GatherPaths>,
@@ -902,11 +904,35 @@ mod tests {
             other => panic!("second event must not post, got {other:?}"),
         }
 
-        // Both events still hit the spool (recorder stays unfiltered).
+        // Key granularity: a DIFFERENT event from the same team+teammate
+        // inside the window is a different key and must still post
+        // (review finding: a team+teammate-only key would drop it).
+        let task_payload = json!({
+            "hook_event_name": "TaskCompleted",
+            "teammate_name": "alpha",
+            "team_name": "wave3",
+        });
+        let exit_code = hook_command_from(
+            "TaskCompleted",
+            std::io::Cursor::new(task_payload.to_string().into_bytes()),
+            Some(&paths),
+            Some(&dir.path().join("state")),
+            Some(&socket),
+            SystemTime::UNIX_EPOCH,
+        );
+        assert_eq!(format!("{exit_code:?}"), format!("{:?}", ExitCode::SUCCESS));
+        listener.set_nonblocking(false).unwrap();
+        let (mut connection, _) = listener.accept().unwrap();
+        let mut received = String::new();
+        connection.read_to_string(&mut received).unwrap();
+        assert!(received.contains("TaskCompleted"), "{received}");
+
+        // All three events still hit the spool (recorder stays
+        // unfiltered), including the debounce-suppressed second one.
         let spool =
             std::fs::read_to_string(dir.path().join("state/herdmates/hook-spool/wave3.jsonl"))
                 .unwrap();
-        assert_eq!(spool.lines().count(), 2, "{spool}");
+        assert_eq!(spool.lines().count(), 3, "{spool}");
     }
 
     /// The host must never notice an unreachable lead: the spool line is

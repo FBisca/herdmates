@@ -7,7 +7,7 @@ metadata:
 
 Gate: `cargo fmt --check && cargo clippy --all-targets -- -D warnings &&
 cargo test && cargo build --bins` in the worktree. Test count grows fast: ~286 passed
-(2026-08-20 early) → **319 passed / 0 failed / 1 ignored** after issue #124;
+(2026-08-20 early) → 319 after #124 → **322 passed / 0 failed / 1 ignored** at b9d7c81 (2026-08-21);
 the 1 ignored is always the `#[ignore]`d live socket probe in
 `src/lead_post.rs`. Trust the number you just ran, not the memory.
 

@@ -68,8 +68,11 @@ while read -r sub; do
   echo "$arms" | grep -qx "$sub" || report "SEAM-SELFSPAWN-DEAD" "src (current_exe spawn)" \
     "Code spawns 'herdmates $sub' via current_exe, but main.rs does not dispatch it. Rename the .arg() literal to a live arm, or restore the subcommand."
 done < <(awk '/current_exe/ { w = 10 }
-  w > 0 { if (match($0, /\.arg\("[a-z][a-z-]*"\)/)) {
-            s = substr($0, RSTART + 6, RLENGTH - 8); print s; w = 0 }
+  w > 0 { line = $0
+          while (match(line, /\.arg\("[a-z][a-z-]*"\)/)) {
+            print substr(line, RSTART + 6, RLENGTH - 8)
+            line = substr(line, RSTART + RLENGTH)
+          }
           w-- }' src/*.rs | sort -u)
 
 if [ "$fail" -eq 0 ]; then

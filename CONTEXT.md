@@ -113,12 +113,15 @@ human-facing team UIs; the layer table is Host (shim, doctor) / Facts
 - **Brain layer** — the lead-facing enrichment layer: push (hook
   enrichment) and pull (lead-facing skill), both resolving the team
   from the lead's own session id, so no surface ever guesses "which
-  team". Not yet implemented (v3.1+ per ADR-0015 rollout).
+  team". Implemented in the v3.1 wave (#122 verbs, #123 enrichment,
+  #124 priority tokens; live-verified).
 - **Hook enrichment** — the brain layer's push half: `herdmates hook`
   handlers, running as the lead's children on TeammateIdle/
   TaskCreated/TaskCompleted, compute signal-engine facts and post them
   into the lead's own inbox socket (`CLAUDE_CODE_MESSAGING_SOCKET`/
   `_TOKEN`) so the lead's model sees reasons alongside native events.
+  Posts are debounced per (team, event, teammate), 30s window (#131) —
+  a repeat inside the window is spooled but not posted.
 - **Lead-facing skill** — the brain layer's pull half: project-level
   skill verbs (`why <agent>`, `deadlocks`, `roster`) resolving the
   team from the calling session's own id. Teammates load the same

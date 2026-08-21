@@ -11,9 +11,9 @@
 # build a `cd <path> && ...` command string. Test fixtures are exempt: they
 # legitimately echo Claude Code's OWN tmux calls (teammux.rs's respawn_pane
 # tests record what the external process sends, not what herdmates
-# constructs), so this check skips every `#[cfg(test)]` item (tracked by brace depth —
-# mid-file `test_support` modules included, review finding F1) and skips
-# comment lines, at real line numbers (finding F3).
+# constructs), so this check skips every `#[cfg(test)]` item (tracked by
+# brace depth — mid-file `test_support` modules included, review finding
+# F1) and skips comment lines, at real line numbers (finding F3).
 #
 # Output is agent-readable: [TAG] / File: / FIX:
 # Exit 0 = clean, 1 = drift found.
