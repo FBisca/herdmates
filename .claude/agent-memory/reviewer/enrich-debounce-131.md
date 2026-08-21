@@ -18,12 +18,18 @@ append stays unfiltered (black-box recorder).
 - Key narrowed to `format!("{team}--{teammate}")`: at b9d7c81 it passed
   322/322 (granularity unguarded). b9db112 added a third event
   (`TaskCompleted`, same team+teammate) to pin granularity — but it
-  calls `listener.set_nonblocking(false)` before that `accept()`, so the
-  same mutation **HANGS FOREVER instead of failing** (proven:
-  `timeout 90 cargo test <name>` → terminated). A regression guard whose
-  failure mode is a wedged CI job is worse than a failing one. Fix: keep
-  the listener non-blocking and retry `accept()` a bounded number of
-  times, panicking on exhaustion.
+  called `listener.set_nonblocking(false)` before that `accept()`, so the
+  same mutation **HUNG FOREVER instead of failing** (`timeout 90 cargo
+  test <name>` → terminated, no panic). **Fixed in dce2598**: bounded
+  non-blocking retry (50 × 10 ms) + `.expect("TaskCompleted must post —
+  the debounce key is too broad")`. Re-proven at dce2598 — the same
+  mutation now FAILS in 1.01 s naming the cause, and the window=0
+  mutation still fails fast at the other arm.
+
+**Lesson worth carrying:** a socket-based regression guard that asserts
+"a message DID arrive" must poll a non-blocking listener with a bounded
+retry. A blocking `accept()` turns the regression into a wedged CI job
+instead of a red test — it guards, but only by hanging.
 
 **Costs that remain on the hook critical path:** the debounce sits AFTER
 `enrich::enrichment_for_event`, which calls

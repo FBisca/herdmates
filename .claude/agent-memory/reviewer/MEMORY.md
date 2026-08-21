@@ -2,5 +2,5 @@
 - [Verification quirks](verification-quirks.md) — full gate 322 tests +1 ignored live probe; live claims checkable against ~/.claude/projects transcripts and hook spool
 - [Seam check cfg(test) cut](seam-check-cfg-test-cut.md) — braceless cfg(test) fixed 4792349; residual = one-line `#[cfg(test)] fn`, mutation-proven
 - [Seam check Side D self-spawn](seam-check-selfspawn-side-d.md) — 2nd-.arg gap fixed b9db112; still blind to >10-line gap and .args([...]); FP on bare current_exe mentions
-- [Enrichment debounce (#131)](enrich-debounce-131.md) — key shape; b9db112's granularity guard HANGS instead of failing; costs still on the hook path
+- [Enrichment debounce (#131)](enrich-debounce-131.md) — key shape; granularity guard hung until dce2598 (poll non-blocking accept); costs still on the hook path
 - [Hook path must not block](hook-path-must-not-block.md) — HerdrClient::invoke has no timeout; #125 put it on the hook critical path
