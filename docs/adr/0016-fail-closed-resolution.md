@@ -1,6 +1,6 @@
 # ADR-0016: Fail-closed resolution — refuse and name the fix, never guess
 
-Status: proposed (2026-08-21, drafted from issue #129; awaiting Caio)
+Status: accepted (2026-08-21, Caio; drafted from issue #129)
 
 ## Context
 

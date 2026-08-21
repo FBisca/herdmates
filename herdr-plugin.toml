@@ -1,6 +1,6 @@
 id = "caioniehues.herdmates"
 name = "Herdmates"
-version = "3.0.0"
+version = "3.2.0"
 min_herdr_version = "0.7.4"
 description = "Claude Code agent teams, native in herdr — teammux shim (takeover default), hook-driven signal engine + recorder, sidebar tokens"
 platforms = ["linux", "macos"]
