@@ -921,8 +921,24 @@ mod tests {
             SystemTime::UNIX_EPOCH,
         );
         assert_eq!(format!("{exit_code:?}"), format!("{:?}", ExitCode::SUCCESS));
-        listener.set_nonblocking(false).unwrap();
-        let (mut connection, _) = listener.accept().unwrap();
+        // Bounded retry, still non-blocking: a too-broad debounce key
+        // means no third connection ever arrives, and this must FAIL,
+        // not hang the test runner (review blocker A).
+        let mut connection = None;
+        for _ in 0..50 {
+            match listener.accept() {
+                Ok((accepted, _)) => {
+                    connection = Some(accepted);
+                    break;
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+                Err(error) => panic!("accept failed: {error}"),
+            }
+        }
+        let mut connection =
+            connection.expect("TaskCompleted must post — the debounce key is too broad");
         let mut received = String::new();
         connection.read_to_string(&mut received).unwrap();
         assert!(received.contains("TaskCompleted"), "{received}");
