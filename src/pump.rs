@@ -67,9 +67,11 @@ pub fn auto_pump(state_dir: &Path) {
     let Ok(exe) = std::env::current_exe() else {
         return;
     };
-    // ponytail: a wedged herdr leaves one detached child per debounce
-    // window (2s) rather than a blocked hook; add a child-side timeout in
-    // HerdrClient::invoke if accumulation is ever observed.
+    // ponytail: a wedged herdr leaves detached children instead of a
+    // blocked hook — at most one per 2s window per non-racing hook;
+    // concurrent hooks can each admit (see `write_marker`'s lost-race
+    // note). Add a child-side timeout in HerdrClient::invoke if
+    // accumulation is ever observed.
     let _ = std::process::Command::new(exe)
         .arg("pump-board")
         .stdin(std::process::Stdio::null())

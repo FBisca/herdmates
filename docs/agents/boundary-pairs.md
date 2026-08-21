@@ -73,6 +73,11 @@ like, how to cross-compare, and which check (if any) is mechanical.
   whole commit after the arms were deleted.
 - **Cross-compare**: already covered — see `scripts/check-subcommand-seams.sh`.
   Don't duplicate its Side A/B/C comparison here; reference it.
+- **Fourth side** (review finding, 2026-08-21): in-code self-invocations —
+  `pump.rs::auto_pump` spawns `current_exe` + `"pump-board"`. A renamed arm
+  silently disables that caller (stderr nulled, spawn Result discarded), so
+  the script's Side D cross-checks every `.arg()` literal near a
+  `current_exe` spawn against the live arms.
 - **Check**: `scripts/check-subcommand-seams.sh` (wired into CI already).
 
 ## Doc staleness (commit-count heuristic)

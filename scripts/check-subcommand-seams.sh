@@ -58,6 +58,20 @@ done < <(grep -oE '"herdmates"[^]]*' herdr-plugin.toml \
   | grep -oE '"herdmates",\s*"[a-z][a-z-]*"' \
   | grep -oE '"[a-z][a-z-]*"$' | tr -d '"' | sort -u)
 
+# --- Side D: in-code self-invocations --------------------------------------
+# The binary re-spawns itself (pump.rs auto_pump: current_exe + "pump-board").
+# A renamed arm silently disables that caller — stderr is nulled and the
+# spawn Result discarded — so every literal .arg() within a few lines of a
+# current_exe spawn must name a live arm.
+while read -r sub; do
+  [ -n "$sub" ] || continue
+  echo "$arms" | grep -qx "$sub" || report "SEAM-SELFSPAWN-DEAD" "src (current_exe spawn)" \
+    "Code spawns 'herdmates $sub' via current_exe, but main.rs does not dispatch it. Rename the .arg() literal to a live arm, or restore the subcommand."
+done < <(awk '/current_exe/ { w = 10 }
+  w > 0 { if (match($0, /\.arg\("[a-z][a-z-]*"\)/)) {
+            s = substr($0, RSTART + 6, RLENGTH - 8); print s; w = 0 }
+          w-- }' src/*.rs | sort -u)
+
 if [ "$fail" -eq 0 ]; then
   echo "OK: subcommand seams agree — $(echo "$arms" | tr '\n' ' ' | sed 's/ $//')"
 fi

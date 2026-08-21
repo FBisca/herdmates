@@ -11,8 +11,7 @@
 # build a `cd <path> && ...` command string. Test fixtures are exempt: they
 # legitimately echo Claude Code's OWN tmux calls (teammux.rs's respawn_pane
 # tests record what the external process sends, not what herdmates
-# constructs), so this check strips everything from `#[cfg(test)]` to EOF
-# so this check skips every `#[cfg(test)]` item (tracked by brace depth —
+# constructs), so this check skips every `#[cfg(test)]` item (tracked by brace depth —
 # mid-file `test_support` modules included, review finding F1) and skips
 # comment lines, at real line numbers (finding F3).
 #
@@ -36,6 +35,10 @@ for f in src/*.rs; do
       depth += gsub(/{/, "{") - gsub(/}/, "}")
       if (depth > 0) started = 1
       if (started && depth <= 0) skip = 0
+      # Braceless item (#[cfg(test)] use/const ...;): no brace ever opens,
+      # so clear the skip at the terminating semicolon instead of latching
+      # to EOF (review finding: latched skip silently unscans the file).
+      if (!started && /;[[:space:]]*$/) skip = 0
       next
     }
     /^[[:space:]]*\/\// { next }
