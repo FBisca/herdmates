@@ -54,19 +54,49 @@ const DEBOUNCE_MARKER_FILE: &str = "pump-board-last-run";
 
 /// Entry point wired into `herdmates hook` (issue #125): every Claude
 /// Code hook event inside a herdr session ticks the board, replacing the
-/// manifest `on-agent-status` wiring deleted in #119/#121.
-/// Debounced via a marker file under `state_dir`; never errors — any
-/// failure (env, I/O, herdr) degrades to a skipped pass, same policy as
-/// [`pump_once`].
-pub fn maybe_pump<H: HerdrApi>(state_dir: &Path, herdr: &H) {
-    let Some(paths) = GatherPaths::from_env() else {
+/// manifest `on-agent-status` wiring deleted in #119/#121. The herdr
+/// work runs in a DETACHED `herdmates pump-board` child — the hook
+/// critical path must never block on a subprocess (review finding F2:
+/// `HerdrClient::invoke` has no timeout, and Claude Code waits on hook
+/// processes). Only the marker-file debounce runs in-process; never
+/// errors — any failure degrades to a skipped pass.
+pub fn auto_pump(state_dir: &Path) {
+    if !debounce_admit(state_dir, now_ms(), PUMP_DEBOUNCE_MS) {
+        return;
+    }
+    let Ok(exe) = std::env::current_exe() else {
         return;
     };
-    maybe_pump_at(state_dir, &paths, herdr, now_ms(), PUMP_DEBOUNCE_MS);
+    // ponytail: a wedged herdr leaves one detached child per debounce
+    // window (2s) rather than a blocked hook; add a child-side timeout in
+    // HerdrClient::invoke if accumulation is ever observed.
+    let _ = std::process::Command::new(exe)
+        .arg("pump-board")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn();
 }
 
-/// Testable core of [`maybe_pump`]. Returns whether a pass actually ran,
-/// so tests can assert the debounce boundary precisely.
+/// Marker-file debounce: returns whether a pass is admitted, writing the
+/// marker on admit. Shared by [`auto_pump`] (detached spawn) and
+/// [`maybe_pump_at`] (in-process, the tested core).
+pub(crate) fn debounce_admit(state_dir: &Path, now_ms: u64, debounce_ms: u64) -> bool {
+    let marker = state_dir.join(DEBOUNCE_MARKER_FILE);
+    if let Some(last_ms) = read_marker(&marker) {
+        if now_ms.saturating_sub(last_ms) < debounce_ms {
+            return false;
+        }
+    }
+    write_marker(&marker, now_ms);
+    true
+}
+
+/// In-process debounced pass: [`debounce_admit`] + [`pump_once`], the
+/// composition `auto_pump` runs across two processes. Test-only — it
+/// exists so the debounce boundary is assertable without spawning the
+/// detached child.
+#[cfg(test)]
 pub(crate) fn maybe_pump_at<H: HerdrApi>(
     state_dir: &Path,
     paths: &GatherPaths,
@@ -74,14 +104,10 @@ pub(crate) fn maybe_pump_at<H: HerdrApi>(
     now_ms: u64,
     debounce_ms: u64,
 ) -> bool {
-    let marker = state_dir.join(DEBOUNCE_MARKER_FILE);
-    if let Some(last_ms) = read_marker(&marker) {
-        if now_ms.saturating_sub(last_ms) < debounce_ms {
-            return false;
-        }
+    if !debounce_admit(state_dir, now_ms, debounce_ms) {
+        return false;
     }
     pump_once(paths, herdr);
-    write_marker(&marker, now_ms);
     true
 }
 

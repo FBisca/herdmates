@@ -345,16 +345,14 @@ pub fn hook_command(args: &[String]) -> ExitCode {
     // Auto-pump the sidebar tokens (#125): the manifest on-agent-status
     // wiring died with #119/#121, so hook events are now the only
     // recurring tick. Feature-detect (ADR-0010): only inside a herdr
-    // session (socket env present), debounced by `maybe_pump`'s marker
-    // under the same state dir as the spool. Env wrapper only — the
-    // debounce core `maybe_pump_at` carries the tests, same split as
+    // session (socket env present). `auto_pump` debounces in-process and
+    // runs the herdr work in a detached `pump-board` child, so the hook
+    // critical path never blocks (review finding F2). Env wrapper only —
+    // the debounce core carries the tests, same split as
     // `hook_command_from`.
     if std::env::var_os("HERDR_SOCKET_PATH").is_some() {
         if let Some(base) = spool_base.as_deref() {
-            crate::pump::maybe_pump(
-                &base.join("herdmates"),
-                &crate::herdr::HerdrClient::from_env(),
-            );
+            crate::pump::auto_pump(&base.join("herdmates"));
         }
     }
     exit

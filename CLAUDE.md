@@ -100,6 +100,9 @@ installed (feature-interaction bugs, marketplace-notes.md pattern #3).
   `state_text`/partial-reload trap) and the worker push protocol.
 - `docs/marketplace-notes.md` + `docs/marketplace-survey-2026-07-14.json`
   — marketplace survey conclusions.
+- `docs/agents/boundary-pairs.md` — producer/consumer seam inventory with
+  cross-compare reviewer briefs (#127); mechanical side in
+  `scripts/check-boundary-seams.sh`.
 
 ## Agent skills
 

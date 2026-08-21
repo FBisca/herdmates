@@ -12,8 +12,9 @@
 # legitimately echo Claude Code's OWN tmux calls (teammux.rs's respawn_pane
 # tests record what the external process sends, not what herdmates
 # constructs), so this check strips everything from `#[cfg(test)]` to EOF
-# (this codebase's convention: tests live in a trailing `mod tests` block)
-# and skips comment lines before grepping.
+# so this check skips every `#[cfg(test)]` item (tracked by brace depth —
+# mid-file `test_support` modules included, review finding F1) and skips
+# comment lines, at real line numbers (finding F3).
 #
 # Output is agent-readable: [TAG] / File: / FIX:
 # Exit 0 = clean, 1 = drift found.
@@ -24,11 +25,24 @@ fail=0
 report() { printf '[%s]\nFile: %s\nFIX: %s\n\n' "$1" "$2" "$3"; fail=1; }
 
 for f in src/*.rs; do
-  # Production code only: cut everything from the first #[cfg(test)] line
-  # onward, then drop comment lines, before searching for the anti-pattern.
-  hits=$(awk '/^#\[cfg\(test\)\]/ { exit } { print }' "$f" \
-    | grep -vE '^\s*//' \
-    | grep -noE 'cd [^"]{1,80}&&' || true)
+  # Production code only: skip each #[cfg(test)] item by tracking brace
+  # depth until its block closes (ponytail: naive brace counting — braces
+  # inside string literals could miscount; good enough for balanced test
+  # modules, switch to a real parser if it ever misfires), skip comment
+  # lines, report real line numbers.
+  hits=$(awk '
+    /^[[:space:]]*#\[cfg\(test\)\]/ { skip = 1; depth = 0; started = 0; next }
+    skip {
+      depth += gsub(/{/, "{") - gsub(/}/, "}")
+      if (depth > 0) started = 1
+      if (started && depth <= 0) skip = 0
+      next
+    }
+    /^[[:space:]]*\/\// { next }
+    match($0, /cd [^"]{1,80}&&/) {
+      print FNR ":" substr($0, RSTART, RLENGTH)
+    }
+  ' "$f" || true)
   if [ -n "$hits" ]; then
     while IFS= read -r hit; do
       [ -n "$hit" ] || continue

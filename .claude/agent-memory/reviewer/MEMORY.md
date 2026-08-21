@@ -1,2 +1,4 @@
 - [Hook payload session_id is not always the teammate](hook-payload-session-identity.md) — TeammateIdle sometimes fires with the lead's session_id/transcript_path; attribution traps
 - [Verification quirks](verification-quirks.md) — full gate ~286 tests +1 ignored live probe; live claims checkable against ~/.claude/projects transcripts and hook spool
+- [Seam check cfg(test) cut](seam-check-cfg-test-cut.md) — check-boundary-seams.sh skips 977 lines of herdr.rs and misreports line numbers; mutation-proven
+- [Hook path must not block](hook-path-must-not-block.md) — HerdrClient::invoke has no timeout; #125 put it on the hook critical path
