@@ -334,14 +334,30 @@ pub fn hook_command(args: &[String]) -> ExitCode {
     // tests below always pass `None`, so `cargo test` inside a Claude Code
     // session can never post into the developer's own lead.
     let socket = crate::lead_post::SocketTarget::from_env();
-    hook_command_from(
+    let exit = hook_command_from(
         &event_name,
         std::io::stdin(),
         paths.as_ref(),
         spool_base.as_deref(),
         socket.as_ref(),
         SystemTime::now(),
-    )
+    );
+    // Auto-pump the sidebar tokens (#125): the manifest on-agent-status
+    // wiring died with #119/#121, so hook events are now the only
+    // recurring tick. Feature-detect (ADR-0010): only inside a herdr
+    // session (socket env present), debounced by `maybe_pump`'s marker
+    // under the same state dir as the spool. Env wrapper only — the
+    // debounce core `maybe_pump_at` carries the tests, same split as
+    // `hook_command_from`.
+    if std::env::var_os("HERDR_SOCKET_PATH").is_some() {
+        if let Some(base) = spool_base.as_deref() {
+            crate::pump::maybe_pump(
+                &base.join("herdmates"),
+                &crate::herdr::HerdrClient::from_env(),
+            );
+        }
+    }
+    exit
 }
 
 /// Testable core of [`hook_command`]. Returns `ExitCode` directly (not the

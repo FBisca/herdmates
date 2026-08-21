@@ -44,16 +44,17 @@ pub(crate) fn default_teams_root() -> Result<PathBuf, PumpError> {
         .ok_or(PumpError::UnresolvedTeamsRoot)
 }
 
-/// Debounce window between board-pump passes triggered by manifest events
-/// (issue #84 step 6): status-changed/pane events can fire in quick
-/// succession, and each pass walks the whole `~/.claude/teams` tree.
+/// Debounce window between board-pump passes triggered by hook events
+/// (issue #125, formerly manifest events, issue #84 step 6): events can
+/// fire in quick succession, and each pass walks the whole
+/// `~/.claude/teams` tree.
 const PUMP_DEBOUNCE_MS: u64 = 2_000;
 
 const DEBOUNCE_MARKER_FILE: &str = "pump-board-last-run";
 
-/// Entry point wired into the existing manifest event handlers
-/// (`on-agent-status`, called for `pane.agent_status_changed`,
-/// `pane.moved`, and every other listed event — ADR-0012 step 6).
+/// Entry point wired into `herdmates hook` (issue #125): every Claude
+/// Code hook event inside a herdr session ticks the board, replacing the
+/// manifest `on-agent-status` wiring deleted in #119/#121.
 /// Debounced via a marker file under `state_dir`; never errors — any
 /// failure (env, I/O, herdr) degrades to a skipped pass, same policy as
 /// [`pump_once`].
