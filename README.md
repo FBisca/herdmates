@@ -64,6 +64,11 @@ teammates land as first-class herdr panes — proven live end-to-end
   (`--resume` works).
 - `herdmates teammux-launch --split [claude args...]` — split a new pane
   for the lead instead.
+- Set `HERDMATES_TEAMMATE_LAYOUT=tab` before launching the lead to move each
+  teammate into its own unfocused Herdr tab after launch. The default keeps
+  Claude's split-pane layout.
+- Herdr sidebar identity uses `lead` for the lead and
+  `teammate:<name>` for teammates; Claude's visible pane title remains `<name>`.
 - Herdr-only by design: the shim's output surface IS herdr panes.
   Outside herdr, Claude Code falls back to in-process teammates.
 

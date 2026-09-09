@@ -224,6 +224,10 @@ pub trait HerdrApi {
     fn pane_run(&self, _: &str, _: &str) -> Result<(), HerdrError> {
         Err(unsupported_api())
     }
+    /// Move an existing pane into a newly-created background tab.
+    fn pane_move_new_tab(&self, _: &str) -> Result<(), HerdrError> {
+        Err(unsupported_api())
+    }
     fn pane_read(&self, _: &str) -> Result<String, HerdrError> {
         Err(unsupported_api())
     }
@@ -406,6 +410,16 @@ impl HerdrClient {
 
     pub fn pane_run(&self, pane_id: &str, input: &str) -> Result<(), HerdrError> {
         let args = args(["pane", "run"]).with(pane_id).with(input).finish();
+        self.invoke(&args)?;
+        Ok(())
+    }
+
+    pub fn pane_move_new_tab(&self, pane_id: &str) -> Result<(), HerdrError> {
+        let args = args(["pane", "move"])
+            .with(pane_id)
+            .with("--new-tab")
+            .with("--no-focus")
+            .finish();
         self.invoke(&args)?;
         Ok(())
     }
@@ -648,6 +662,9 @@ impl HerdrApi for HerdrClient {
     }
     fn pane_run(&self, pane_id: &str, input: &str) -> Result<(), HerdrError> {
         Self::pane_run(self, pane_id, input)
+    }
+    fn pane_move_new_tab(&self, pane_id: &str) -> Result<(), HerdrError> {
+        Self::pane_move_new_tab(self, pane_id)
     }
     fn pane_read(&self, pane_id: &str) -> Result<String, HerdrError> {
         Self::pane_read(self, pane_id)
@@ -932,6 +949,12 @@ pub(crate) mod test_support {
             if input.is_empty() {
                 self.empty_submit_seen.set(true);
             }
+            Ok(())
+        }
+        fn pane_move_new_tab(&self, pane_id: &str) -> Result<(), HerdrError> {
+            self.calls
+                .borrow_mut()
+                .push(format!("pane_move_new_tab:{pane_id}"));
             Ok(())
         }
         fn agent_wait(

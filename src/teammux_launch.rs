@@ -23,6 +23,7 @@
 use crate::herdr::{HerdrApi, HerdrClient, HerdrError};
 use crate::idmap::{IdMap, STATE_PATH_ENV};
 use crate::paths::{self, PathError};
+use crate::teammux::{publish_display_agent, LEAD_DISPLAY_AGENT};
 use std::io;
 use std::path::{Path, PathBuf};
 use thiserror::Error;
@@ -164,6 +165,7 @@ pub fn teammux_launch_command(args: &[String]) -> Result<(), TeammuxLaunchError>
             .pane_get(&caller_pane)
             .ok()
             .and_then(|pane| pane.tab_id);
+        publish_display_agent(&herdr, &caller_pane, LEAD_DISPLAY_AGENT);
         let env_pairs = seed_lead_state(
             &state_root,
             &teammux_binary,
@@ -235,6 +237,7 @@ fn launch(
         &lead.pane_id,
         lead.tab_id.as_deref(),
     )?;
+    publish_display_agent(herdr, &lead.pane_id, LEAD_DISPLAY_AGENT);
     let command_line = lead_command_line(&env_pairs, claude_args);
     herdr.pane_run(&lead.pane_id, &command_line)?;
 

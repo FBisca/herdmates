@@ -79,6 +79,9 @@ use crate::metadata::{MetadataCapabilities, MetadataUpdate};
 use crate::tmuxargs::{self, DisplayField, ParseError, TmuxId, Verb};
 use std::process::ExitCode;
 
+pub(crate) const LEAD_DISPLAY_AGENT: &str = "lead";
+const TEAMMATE_DISPLAY_AGENT_PREFIX: &str = "teammate:";
+
 /// The result of dispatching one parsed tmux call, before any process I/O.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DispatchOutcome {
@@ -130,7 +133,13 @@ pub fn dispatch<H: HerdrApi>(
             size,
             ..
         } => split_window(herdr, idmap, &target, direction, size.as_deref()),
-        Verb::RespawnPane { pane, command } => respawn_pane(herdr, idmap, &pane, &command),
+        Verb::RespawnPane { pane, command } => respawn_pane(
+            herdr,
+            idmap,
+            &pane,
+            &command,
+            std::env::var("HERDMATES_TEAMMATE_LAYOUT").as_deref() == Ok("tab"),
+        ),
         Verb::KillPane { pane } => kill_pane(herdr, idmap, &pane),
         Verb::SelectPaneTitle { pane, title } => select_pane_title(herdr, idmap, &pane, &title),
         Verb::ResizePane { pane, amount } => resize_pane(herdr, idmap, &pane, &amount),
@@ -185,20 +194,40 @@ fn styling_noop(call: String) -> DispatchOutcome {
 /// already-split pane, via `herdr pane run` (closest herdr match — herdr has
 /// no separate "respawn the pane's process" primitive; `pane run` submits
 /// `CMD` to the pane the same way a human typing it would).
+///
+/// Claude Code's native launcher may expose its foreground executable as a
+/// version number rather than `claude`. The scoped hint lets herdr classify
+/// that process while keeping the variable out of the pane's later shell.
+/// Set `HERDMATES_TEAMMATE_LAYOUT=tab` to move the launched teammate into a
+/// newly-created, unfocused Herdr tab after launch. The default remains the
+/// split-pane layout Claude requested.
 fn respawn_pane<H: HerdrApi>(
     herdr: &H,
     idmap: &IdMap,
     pane: &TmuxId,
     command: &str,
+    move_to_tab: bool,
 ) -> DispatchOutcome {
     let herdr_pane_id = match idmap.lookup(pane.as_str()) {
         Some(id) => id.to_owned(),
         None => return unknown_tmux_id("respawn-pane", pane.as_str()),
     };
-    match herdr.pane_run(&herdr_pane_id, command) {
-        Ok(()) => DispatchOutcome::Ok {
-            stdout: String::new(),
-        },
+    let command = format!("(export HERDR_AGENT=claude; {command})");
+    match herdr.pane_run(&herdr_pane_id, &command) {
+        Ok(()) => {
+            if move_to_tab {
+                if let Err(error) = herdr.pane_move_new_tab(&herdr_pane_id) {
+                    return DispatchOutcome::Error {
+                        message: format!(
+                            "teammux: respawn-pane: herdr pane move to tab failed: {error}"
+                        ),
+                    };
+                }
+            }
+            DispatchOutcome::Ok {
+                stdout: String::new(),
+            }
+        }
         Err(error) => DispatchOutcome::Error {
             message: format!("teammux: respawn-pane: herdr pane run failed: {error}"),
         },
@@ -228,7 +257,7 @@ fn kill_pane<H: HerdrApi>(herdr: &H, idmap: &IdMap, pane: &TmuxId) -> DispatchOu
 }
 
 /// `select-pane -t %N -T TITLE`: rename the herdr pane. Also publishes
-/// `title` as display-only `--display-agent` pane metadata (issue #104:
+/// `teammate:TITLE` as display-only `--display-agent` pane metadata (issue #104:
 /// herdr's agent-list API has no label field, so surfaces like reviewr's
 /// Send picker only ever see the agent kind unless this is set) — best
 /// effort, never turns a metadata failure into a dispatch failure, since
@@ -245,7 +274,11 @@ fn select_pane_title<H: HerdrApi>(
     };
     match herdr.pane_rename(&herdr_pane_id, title) {
         Ok(()) => {
-            publish_display_agent(herdr, &herdr_pane_id, title);
+            publish_display_agent(
+                herdr,
+                &herdr_pane_id,
+                &format!("{TEAMMATE_DISPLAY_AGENT_PREFIX}{title}"),
+            );
             DispatchOutcome::Ok {
                 stdout: String::new(),
             }
@@ -260,7 +293,7 @@ fn select_pane_title<H: HerdrApi>(
 /// schema-gated via [`MetadataCapabilities`] so it degrades cleanly on an
 /// older herdr. Swallows every failure (schema fetch, capability absent,
 /// publish error) — see [`select_pane_title`]'s doc comment.
-fn publish_display_agent<H: HerdrApi>(herdr: &H, herdr_pane_id: &str, name: &str) {
+pub(crate) fn publish_display_agent<H: HerdrApi>(herdr: &H, herdr_pane_id: &str, name: &str) {
     let Ok(schema) = herdr.api_schema() else {
         return;
     };
@@ -1221,7 +1254,7 @@ mod tests {
     }
 
     #[test]
-    fn respawn_pane_submits_the_command_via_pane_run() {
+    fn respawn_pane_marks_the_teammate_as_claude_for_herdr() {
         let idmap = temp_idmap(&[("%1", "w1A:p6")]);
         let fake = FakeHerdr::default();
 
@@ -1242,7 +1275,27 @@ mod tests {
         assert!(fake
             .calls()
             .iter()
-            .any(|call| call == "pane_run:w1A:p6:cd /tmp && claude"));
+            .any(|call| call == "pane_run:w1A:p6:(export HERDR_AGENT=claude; cd /tmp && claude)"));
+    }
+
+    #[test]
+    fn respawn_pane_can_move_the_teammate_into_a_background_tab() {
+        let idmap = temp_idmap(&[("%1", "w1A:p6")]);
+        let fake = FakeHerdr::default();
+
+        let outcome = respawn_pane(&fake, &idmap, &TmuxId::parse("%1").unwrap(), "claude", true);
+
+        assert_eq!(
+            outcome,
+            DispatchOutcome::Ok {
+                stdout: String::new()
+            }
+        );
+        let calls = fake.calls();
+        assert!(calls
+            .iter()
+            .any(|call| call == "pane_run:w1A:p6:(export HERDR_AGENT=claude; claude)"));
+        assert!(calls.iter().any(|call| call == "pane_move_new_tab:w1A:p6"));
     }
 
     #[test]
@@ -1407,7 +1460,7 @@ mod tests {
                 .unwrap()
                 .display_agent
                 .as_deref(),
-            Some("agent-1")
+            Some("teammate:agent-1")
         );
     }
 
